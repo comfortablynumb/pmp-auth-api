@@ -344,8 +344,8 @@ mod tests {
         };
 
         // Create a token
-        let token = create_local_token("user123", "user@example.com", UserRole::User, &config)
-            .unwrap();
+        let token =
+            create_local_token("user123", "user@example.com", UserRole::User, &config).unwrap();
 
         // Validate it
         let result = validate_local_token(&token, &config);
@@ -367,8 +367,8 @@ mod tests {
         };
 
         // Create a token
-        let token = create_secret_token("user456", "admin@example.com", UserRole::Admin, &config)
-            .unwrap();
+        let token =
+            create_secret_token("user456", "admin@example.com", UserRole::Admin, &config).unwrap();
 
         // Validate it
         let result = validate_secret_token(&token, &config);

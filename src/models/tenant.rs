@@ -499,10 +499,7 @@ auth_strategies:
 
         let config = AppConfig { tenants };
 
-        assert_eq!(
-            config.get_tenant("test").unwrap().auth_strategies.len(),
-            2
-        );
+        assert_eq!(config.get_tenant("test").unwrap().auth_strategies.len(), 2);
         assert!(config.get_auth_strategy("test", "local").is_some());
         assert!(config.get_auth_strategy("test", "jwt").is_some());
     }

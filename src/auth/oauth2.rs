@@ -339,7 +339,10 @@ mod tests {
     #[test]
     fn test_user_info_structure() {
         let mut extra = HashMap::new();
-        extra.insert("custom_field".to_string(), serde_json::json!("custom_value"));
+        extra.insert(
+            "custom_field".to_string(),
+            serde_json::json!("custom_value"),
+        );
 
         let user_info = UserInfo {
             id: "user123".to_string(),
