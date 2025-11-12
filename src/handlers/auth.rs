@@ -76,7 +76,7 @@ pub async fn register(
     let claims = Claims {
         sub: user_id.to_string(),
         email: user.email.clone(),
-        role: user.role.clone(),
+        role: user.role,
         exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
     };
 
@@ -147,7 +147,7 @@ pub async fn login(
     let claims = Claims {
         sub: user.id.to_string(),
         email: user.email.clone(),
-        role: user.role.clone(),
+        role: user.role,
         exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
     };
 

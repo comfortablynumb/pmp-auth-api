@@ -11,6 +11,7 @@ use tracing::{debug, warn};
 
 /// Context about the authenticated user and tenant
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Exported for library use
 pub struct TenantAuthUser {
     pub claims: Claims,
     pub tenant_id: String,
@@ -18,6 +19,7 @@ pub struct TenantAuthUser {
 }
 
 /// Middleware to authenticate requests for tenant-specific routes
+#[allow(dead_code)] // Exported for library use
 pub async fn tenant_auth_middleware(
     State(config): State<Arc<AppConfig>>,
     mut request: Request,
@@ -114,6 +116,7 @@ pub async fn tenant_auth_middleware(
 }
 
 /// Middleware to require admin role for tenant-specific routes
+#[allow(dead_code)] // Exported for library use
 pub async fn require_tenant_admin(
     request: Request,
     next: Next,

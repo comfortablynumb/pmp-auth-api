@@ -112,7 +112,7 @@ pub async fn register(
         let mut users = TENANT_USERS.lock().unwrap();
         users
             .entry(tenant_id.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(user.id, user.clone());
     }
 
@@ -121,7 +121,7 @@ pub async fn register(
         let mut email_index = TENANT_EMAIL_INDEX.lock().unwrap();
         email_index
             .entry(tenant_id.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(payload.email.clone(), user.id);
     }
 

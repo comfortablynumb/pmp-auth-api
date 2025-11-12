@@ -18,7 +18,7 @@ pub struct OAuth2State {
     pub csrf_token: String,
 }
 
-/// Global storage for OAuth2 states (in production, use Redis or similar)
+// Global storage for OAuth2 states (in production, use Redis or similar)
 lazy_static::lazy_static! {
     static ref OAUTH2_STATES: Arc<Mutex<HashMap<String, OAuth2State>>> = Arc::new(Mutex::new(HashMap::new()));
 }
@@ -218,6 +218,7 @@ async fn fetch_user_info(
 }
 
 /// Clear expired OAuth2 states (should be called periodically)
+#[allow(dead_code)] // Exported for library use
 pub fn cleanup_expired_states() {
     // In a production system, store timestamps with states and clean up old ones
     // For now, this is a placeholder

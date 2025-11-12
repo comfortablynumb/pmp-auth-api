@@ -1,6 +1,4 @@
-use crate::models::{
-    AuthStrategy, Claims, JwkConfig, LocalAuthConfig, OAuth2Config, SecretJwtConfig,
-};
+use crate::models::{AuthStrategy, Claims, JwkConfig, LocalAuthConfig, SecretJwtConfig};
 use alcoholic_jwt::{token_kid, validate, ValidJWT, Validation, JWKS};
 use axum::http::StatusCode;
 use jsonwebtoken::{decode, DecodingKey, Validation as JwtValidation};
@@ -17,7 +15,7 @@ struct JwkCacheEntry {
     cached_at: Instant,
 }
 
-/// Global JWK cache
+// Global JWK cache
 lazy_static::lazy_static! {
     static ref JWK_CACHE: Arc<Mutex<HashMap<String, JwkCacheEntry>>> = Arc::new(Mutex::new(HashMap::new()));
 }
