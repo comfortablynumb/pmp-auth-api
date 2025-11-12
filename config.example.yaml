@@ -1,0 +1,142 @@
+# Multi-tenant Authentication API Configuration Example
+
+tenants:
+  # Example tenant 1: Using JWK-based JWT authentication
+  acme-corp:
+    id: acme-corp
+    name: "ACME Corporation"
+    description: "ACME Corp's authentication configuration"
+    active: true
+    auth_strategies:
+      # Strategy 1: JWT with JWK validation (e.g., Auth0, Okta)
+      auth0:
+        type: jwkjwt
+        jwks_uri: "https://your-domain.auth0.com/.well-known/jwks.json"
+        issuer: "https://your-domain.auth0.com/"
+        audience:
+          - "https://api.acme-corp.com"
+        cache_duration_secs: 3600
+        algorithms:
+          - "RS256"
+
+      # Strategy 2: Local authentication with username/password
+      local:
+        type: local
+        allow_registration: true
+        min_password_length: 10
+        require_email_verification: false
+        jwt_secret: "acme-corp-secret-key-change-in-production"
+        expiration_secs: 86400
+
+  # Example tenant 2: Using OAuth2
+  globex:
+    id: globex
+    name: "Globex Corporation"
+    description: "Globex OAuth2 setup"
+    active: true
+    auth_strategies:
+      # OAuth2 with Google
+      google-oauth:
+        type: oauth2
+        client_id: "your-google-client-id.apps.googleusercontent.com"
+        client_secret: "your-google-client-secret"
+        auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+        token_url: "https://oauth2.googleapis.com/token"
+        redirect_uri: "https://api.globex.com/api/v1/tenant/globex/auth/google-oauth/callback"
+        scopes:
+          - "openid"
+          - "email"
+          - "profile"
+        userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo"
+
+      # Local auth as fallback
+      local:
+        type: local
+        allow_registration: true
+        min_password_length: 8
+        require_email_verification: true
+        jwt_secret: "globex-secret-key-change-in-production"
+        expiration_secs: 86400
+
+  # Example tenant 3: Using secret-based JWT (simple shared secret)
+  initech:
+    id: initech
+    name: "Initech"
+    description: "Simple JWT authentication"
+    active: true
+    auth_strategies:
+      # Simple JWT with shared secret
+      jwt:
+        type: secretjwt
+        secret: "initech-super-secret-key-change-in-production"
+        issuer: "initech-auth-api"
+        audience:
+          - "initech-api"
+        expiration_secs: 43200  # 12 hours
+
+  # Example tenant 4: Multiple OAuth2 providers
+  umbrella:
+    id: umbrella
+    name: "Umbrella Corporation"
+    description: "Multiple OAuth2 providers"
+    active: true
+    auth_strategies:
+      # GitHub OAuth2
+      github:
+        type: oauth2
+        client_id: "your-github-client-id"
+        client_secret: "your-github-client-secret"
+        auth_url: "https://github.com/login/oauth/authorize"
+        token_url: "https://github.com/login/oauth/access_token"
+        redirect_uri: "https://api.umbrella.com/api/v1/tenant/umbrella/auth/github/callback"
+        scopes:
+          - "user:email"
+          - "read:user"
+        userinfo_url: "https://api.github.com/user"
+
+      # Microsoft OAuth2
+      microsoft:
+        type: oauth2
+        client_id: "your-microsoft-client-id"
+        client_secret: "your-microsoft-client-secret"
+        auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+        token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        redirect_uri: "https://api.umbrella.com/api/v1/tenant/umbrella/auth/microsoft/callback"
+        scopes:
+          - "openid"
+          - "email"
+          - "profile"
+        userinfo_url: "https://graph.microsoft.com/v1.0/me"
+
+      # Local authentication
+      local:
+        type: local
+        allow_registration: false  # Only admins can create accounts
+        min_password_length: 12
+        require_email_verification: true
+        jwt_secret: "umbrella-secret-key-change-in-production"
+        expiration_secs: 28800  # 8 hours
+
+# URL patterns for this configuration:
+#
+# ACME Corp Local Auth:
+#   - POST /api/v1/tenant/acme-corp/auth/local/register
+#   - POST /api/v1/tenant/acme-corp/auth/local/login
+#
+# ACME Corp Auth0 JWT:
+#   - Protected endpoints use: Authorization: Bearer <auth0-jwt-token>
+#   - Validates against: /api/v1/tenant/acme-corp/auth/auth0/*
+#
+# Globex Google OAuth:
+#   - GET  /api/v1/tenant/globex/auth/google-oauth/login (initiates OAuth flow)
+#   - GET  /api/v1/tenant/globex/auth/google-oauth/callback (OAuth callback)
+#
+# Initech Simple JWT:
+#   - POST /api/v1/tenant/initech/auth/jwt/login
+#
+# Umbrella Multiple Providers:
+#   - GET  /api/v1/tenant/umbrella/auth/github/login
+#   - GET  /api/v1/tenant/umbrella/auth/github/callback
+#   - GET  /api/v1/tenant/umbrella/auth/microsoft/login
+#   - GET  /api/v1/tenant/umbrella/auth/microsoft/callback
+#   - POST /api/v1/tenant/umbrella/auth/local/login
