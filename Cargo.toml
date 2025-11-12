@@ -1,0 +1,56 @@
+[package]
+name = "pmp-auth-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+config = "0.14"
+
+# JWT and auth
+jsonwebtoken = "9"
+bcrypt = "0.15"
+oauth2 = "4"
+alcoholic_jwt = "4091"
+base64 = "0.22"
+
+# Environment variables
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# HTTP client (for testing)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Async trait
+async-trait = "0.1"
+
+# Lazy static for global state
+lazy_static = "1.4"
+
+[dev-dependencies]
+# Testing
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

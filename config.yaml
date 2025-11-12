@@ -1,0 +1,51 @@
+# Multi-tenant Authentication API Configuration
+# This is a simple test configuration
+
+tenants:
+  # Test tenant with local authentication
+  test-tenant:
+    id: test-tenant
+    name: "Test Tenant"
+    description: "Test tenant for development"
+    active: true
+    auth_strategies:
+      # Local username/password authentication
+      local:
+        type: local
+        allow_registration: true
+        min_password_length: 8
+        require_email_verification: false
+        jwt_secret: "test-tenant-secret-change-in-production"
+        expiration_secs: 86400  # 24 hours
+
+      # Simple JWT with shared secret
+      jwt:
+        type: secretjwt
+        secret: "test-tenant-jwt-secret-change-in-production"
+        issuer: "test-tenant-auth-api"
+        audience:
+          - "test-tenant-api"
+        expiration_secs: 43200  # 12 hours
+
+  # Demo tenant with multiple strategies
+  demo:
+    id: demo
+    name: "Demo Corporation"
+    description: "Demo tenant with multiple auth strategies"
+    active: true
+    auth_strategies:
+      # Local authentication
+      local:
+        type: local
+        allow_registration: true
+        min_password_length: 10
+        require_email_verification: false
+        jwt_secret: "demo-secret-change-in-production"
+        expiration_secs: 3600  # 1 hour
+
+      # JWT with shared secret
+      api-key:
+        type: secretjwt
+        secret: "demo-api-key-secret-change-in-production"
+        issuer: "demo-auth-api"
+        expiration_secs: 86400
