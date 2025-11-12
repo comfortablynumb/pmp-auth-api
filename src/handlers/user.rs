@@ -1,5 +1,5 @@
-use axum::{http::StatusCode, Extension, Json};
-use serde_json::{json, Value};
+use axum::{Extension, Json, http::StatusCode};
+use serde_json::{Value, json};
 
 use crate::middleware::auth::AuthUser;
 

@@ -1,9 +1,9 @@
 use axum::{
+    Json,
     extract::Request,
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
