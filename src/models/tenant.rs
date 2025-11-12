@@ -213,9 +213,9 @@ type: local
 jwt_secret: "test-secret"
 "#;
         let config: LocalAuthConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.allow_registration, true);
+        assert!(config.allow_registration);
         assert_eq!(config.min_password_length, 8);
-        assert_eq!(config.require_email_verification, false);
+        assert!(!config.require_email_verification);
         assert_eq!(config.expiration_secs, 86400);
     }
 
@@ -241,7 +241,7 @@ auth_strategies:
     jwt_secret: "secret"
 "#;
         let tenant: Tenant = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(tenant.active, true);
+        assert!(tenant.active);
     }
 
     #[test]

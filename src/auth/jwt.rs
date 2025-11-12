@@ -1,5 +1,5 @@
 use crate::models::Claims;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use std::env;
 
 const DEFAULT_SECRET: &str = "your-secret-key-change-this-in-production";

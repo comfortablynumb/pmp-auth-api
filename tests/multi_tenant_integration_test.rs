@@ -249,5 +249,5 @@ fn test_inactive_tenant() {
 
     // Tenant should still be accessible
     let tenant = config.get_tenant("inactive-tenant").unwrap();
-    assert_eq!(tenant.active, false);
+    assert!(!tenant.active);
 }

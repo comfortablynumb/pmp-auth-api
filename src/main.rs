@@ -5,8 +5,8 @@ mod middleware;
 mod models;
 
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
