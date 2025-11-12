@@ -85,10 +85,8 @@ async fn validate_jwk_token(
         config.issuer.clone().unwrap_or_default(),
     )];
 
-    if let Some(audience) = &config.audience {
-        if !audience.is_empty() {
-            validations.push(Validation::Audience(audience[0].clone()));
-        }
+    if let Some(audience) = &config.audience && !audience.is_empty() {
+        validations.push(Validation::Audience(audience[0].clone()));
     }
 
     // Validate the token
@@ -192,11 +190,9 @@ async fn fetch_jwks(jwks_uri: &str, cache_duration_secs: u64) -> Result<JWKS, St
     // Check cache first
     {
         let cache = JWK_CACHE.lock().unwrap();
-        if let Some(entry) = cache.get(jwks_uri) {
-            if entry.cached_at.elapsed() < Duration::from_secs(cache_duration_secs) {
-                debug!("Using cached JWKS for {}", jwks_uri);
-                return Ok(entry.jwks.clone());
-            }
+        if let Some(entry) = cache.get(jwks_uri) && entry.cached_at.elapsed() < Duration::from_secs(cache_duration_secs) {
+            debug!("Using cached JWKS for {}", jwks_uri);
+            return Ok(entry.jwks.clone());
         }
     }
 

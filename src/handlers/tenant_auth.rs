@@ -79,13 +79,11 @@ pub async fn register(
     // Check if email already exists for this tenant
     {
         let email_index = TENANT_EMAIL_INDEX.lock().unwrap();
-        if let Some(tenant_emails) = email_index.get(&tenant_id) {
-            if tenant_emails.contains_key(&payload.email) {
-                return Err((
-                    StatusCode::CONFLICT,
-                    Json(json!({ "error": "Email already registered" })),
-                ));
-            }
+        if let Some(tenant_emails) = email_index.get(&tenant_id) && tenant_emails.contains_key(&payload.email) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "Email already registered" })),
+            ));
         }
     }
 
