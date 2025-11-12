@@ -44,22 +44,16 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-pub async fn require_admin(
-    request: Request,
-    next: Next,
-) -> Result<Response, impl IntoResponse> {
+pub async fn require_admin(request: Request, next: Next) -> Result<Response, impl IntoResponse> {
     // Get the claims from the request extensions
-    let auth_user = request
-        .extensions()
-        .get::<AuthUser>()
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "error": "Unauthorized"
-                })),
-            )
-        })?;
+    let auth_user = request.extensions().get::<AuthUser>().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "Unauthorized"
+            })),
+        )
+    })?;
 
     // Check if the user is an admin
     if auth_user.claims.role != UserRole::Admin {

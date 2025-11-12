@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::auth::{hash_password, verify_password, create_token};
-use crate::models::{AuthResponse, Claims, LoginRequest, RegisterRequest, User, UserInfo, UserRole};
+use crate::auth::{create_token, hash_password, verify_password};
+use crate::models::{
+    AuthResponse, Claims, LoginRequest, RegisterRequest, User, UserInfo, UserRole,
+};
 
 // In-memory storage (in production, use a real database)
 lazy_static::lazy_static! {
