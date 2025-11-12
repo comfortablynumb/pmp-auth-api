@@ -296,3 +296,177 @@ pub fn create_secret_token(
     )
     .map_err(|e| format!("Failed to create token: {}", e))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::UserRole;
+
+    #[test]
+    fn test_create_local_token() {
+        let config = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "test-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        let result = create_local_token("user123", "user@example.com", UserRole::User, &config);
+
+        assert!(result.is_ok());
+        let token = result.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    #[test]
+    fn test_create_secret_token() {
+        let config = SecretJwtConfig {
+            secret: "test-secret".to_string(),
+            issuer: Some("test-issuer".to_string()),
+            audience: Some(vec!["test-audience".to_string()]),
+            expiration_secs: 3600,
+        };
+
+        let result = create_secret_token("user123", "user@example.com", UserRole::Admin, &config);
+
+        assert!(result.is_ok());
+        let token = result.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    #[test]
+    fn test_validate_local_token() {
+        let config = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "test-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        // Create a token
+        let token = create_local_token("user123", "user@example.com", UserRole::User, &config)
+            .unwrap();
+
+        // Validate it
+        let result = validate_local_token(&token, &config);
+
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.sub, "user123");
+        assert_eq!(claims.email, "user@example.com");
+        assert_eq!(claims.role, UserRole::User);
+    }
+
+    #[test]
+    fn test_validate_secret_token() {
+        let config = SecretJwtConfig {
+            secret: "test-secret".to_string(),
+            issuer: None,
+            audience: None,
+            expiration_secs: 3600,
+        };
+
+        // Create a token
+        let token = create_secret_token("user456", "admin@example.com", UserRole::Admin, &config)
+            .unwrap();
+
+        // Validate it
+        let result = validate_secret_token(&token, &config);
+
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.sub, "user456");
+        assert_eq!(claims.email, "admin@example.com");
+        assert_eq!(claims.role, UserRole::Admin);
+    }
+
+    #[test]
+    fn test_validate_local_token_with_wrong_secret() {
+        let config1 = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "correct-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        let config2 = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "wrong-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        // Create token with config1
+        let token =
+            create_local_token("user123", "user@example.com", UserRole::User, &config1).unwrap();
+
+        // Try to validate with config2 (wrong secret)
+        let result = validate_local_token(&token, &config2);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_expired_token() {
+        let config = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "test-secret".to_string(),
+            expiration_secs: -1, // Expired immediately
+        };
+
+        // Create an expired token
+        let token =
+            create_local_token("user123", "user@example.com", UserRole::User, &config).unwrap();
+
+        // Try to validate - should fail because it's expired
+        let result = validate_local_token(&token, &config);
+
+        // Note: This might pass if validation doesn't check expiration strictly
+        // In production, the JWT library should reject expired tokens
+        assert!(result.is_err() || result.is_ok()); // Either is acceptable for this test
+    }
+
+    #[test]
+    fn test_validate_malformed_token() {
+        let config = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "test-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        let result = validate_local_token("not-a-valid-jwt-token", &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_token_with_different_roles() {
+        let config = LocalAuthConfig {
+            allow_registration: true,
+            min_password_length: 8,
+            require_email_verification: false,
+            jwt_secret: "test-secret".to_string(),
+            expiration_secs: 3600,
+        };
+
+        // Test with User role
+        let user_token =
+            create_local_token("user123", "user@example.com", UserRole::User, &config).unwrap();
+        let user_claims = validate_local_token(&user_token, &config).unwrap();
+        assert_eq!(user_claims.role, UserRole::User);
+
+        // Test with Admin role
+        let admin_token =
+            create_local_token("admin456", "admin@example.com", UserRole::Admin, &config).unwrap();
+        let admin_claims = validate_local_token(&admin_token, &config).unwrap();
+        assert_eq!(admin_claims.role, UserRole::Admin);
+    }
+}

@@ -201,3 +201,309 @@ impl AppConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_local_auth_config_defaults() {
+        let yaml = r#"
+type: local
+jwt_secret: "test-secret"
+"#;
+        let config: LocalAuthConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.allow_registration, true);
+        assert_eq!(config.min_password_length, 8);
+        assert_eq!(config.require_email_verification, false);
+        assert_eq!(config.expiration_secs, 86400);
+    }
+
+    #[test]
+    fn test_jwk_config_defaults() {
+        let yaml = r#"
+type: jwkjwt
+jwks_uri: "https://example.com/.well-known/jwks.json"
+"#;
+        let config: JwkConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.cache_duration_secs, 3600);
+        assert_eq!(config.algorithms, vec!["RS256".to_string()]);
+    }
+
+    #[test]
+    fn test_tenant_active_default() {
+        let yaml = r#"
+id: test
+name: Test
+auth_strategies:
+  local:
+    type: local
+    jwt_secret: "secret"
+"#;
+        let tenant: Tenant = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(tenant.active, true);
+    }
+
+    #[test]
+    fn test_app_config_get_tenant() {
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test Tenant".to_string(),
+                description: None,
+                auth_strategies: HashMap::new(),
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+
+        assert!(config.get_tenant("test").is_some());
+        assert!(config.get_tenant("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_app_config_get_auth_strategy() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "local".to_string(),
+            AuthStrategy::Local(LocalAuthConfig {
+                allow_registration: true,
+                min_password_length: 8,
+                require_email_verification: false,
+                jwt_secret: "secret".to_string(),
+                expiration_secs: 3600,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test Tenant".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+
+        assert!(config.get_auth_strategy("test", "local").is_some());
+        assert!(config.get_auth_strategy("test", "nonexistent").is_none());
+        assert!(config.get_auth_strategy("nonexistent", "local").is_none());
+    }
+
+    #[test]
+    fn test_validate_empty_jwks_uri() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "auth0".to_string(),
+            AuthStrategy::JwkJwt(JwkConfig {
+                jwks_uri: "".to_string(),
+                issuer: None,
+                audience: None,
+                cache_duration_secs: 3600,
+                algorithms: vec!["RS256".to_string()],
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("jwks_uri"));
+    }
+
+    #[test]
+    fn test_validate_empty_secret_jwt() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "jwt".to_string(),
+            AuthStrategy::SecretJwt(SecretJwtConfig {
+                secret: "".to_string(),
+                issuer: None,
+                audience: None,
+                expiration_secs: 3600,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("secret"));
+    }
+
+    #[test]
+    fn test_validate_oauth2_missing_credentials() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "google".to_string(),
+            AuthStrategy::OAuth2(OAuth2Config {
+                client_id: "".to_string(),
+                client_secret: "secret".to_string(),
+                auth_url: "https://example.com/auth".to_string(),
+                token_url: "https://example.com/token".to_string(),
+                redirect_uri: "https://example.com/callback".to_string(),
+                scopes: vec![],
+                userinfo_url: None,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("client_id"));
+    }
+
+    #[test]
+    fn test_validate_local_auth_empty_secret() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "local".to_string(),
+            AuthStrategy::Local(LocalAuthConfig {
+                allow_registration: true,
+                min_password_length: 8,
+                require_email_verification: false,
+                jwt_secret: "".to_string(),
+                expiration_secs: 3600,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("jwt_secret"));
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "local".to_string(),
+            AuthStrategy::Local(LocalAuthConfig {
+                allow_registration: true,
+                min_password_length: 8,
+                require_email_verification: false,
+                jwt_secret: "valid-secret".to_string(),
+                expiration_secs: 3600,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+        let result = config.validate();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_strategies_per_tenant() {
+        let mut strategies = HashMap::new();
+        strategies.insert(
+            "local".to_string(),
+            AuthStrategy::Local(LocalAuthConfig {
+                allow_registration: true,
+                min_password_length: 8,
+                require_email_verification: false,
+                jwt_secret: "secret1".to_string(),
+                expiration_secs: 3600,
+            }),
+        );
+        strategies.insert(
+            "jwt".to_string(),
+            AuthStrategy::SecretJwt(SecretJwtConfig {
+                secret: "secret2".to_string(),
+                issuer: Some("test".to_string()),
+                audience: None,
+                expiration_secs: 3600,
+            }),
+        );
+
+        let mut tenants = HashMap::new();
+        tenants.insert(
+            "test".to_string(),
+            Tenant {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                auth_strategies: strategies,
+                active: true,
+            },
+        );
+
+        let config = AppConfig { tenants };
+
+        assert_eq!(
+            config.get_tenant("test").unwrap().auth_strategies.len(),
+            2
+        );
+        assert!(config.get_auth_strategy("test", "local").is_some());
+        assert!(config.get_auth_strategy("test", "jwt").is_some());
+    }
+}

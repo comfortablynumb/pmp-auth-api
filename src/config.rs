@@ -75,7 +75,8 @@ pub fn load_config_with_fallback() -> Result<Arc<AppConfig>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AuthStrategy, LocalAuthConfig, Tenant};
+    use crate::models::tenant::Tenant;
+    use crate::models::{AuthStrategy, LocalAuthConfig};
     use std::collections::HashMap;
 
     #[test]
