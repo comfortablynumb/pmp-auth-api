@@ -35,6 +35,10 @@ struct AuthorizationCodeData {
     tenant_id: String,
     created_at: i64,
     expires_at: i64,
+    /// PKCE code challenge (RFC 7636)
+    code_challenge: Option<String>,
+    /// PKCE code challenge method: "plain" or "S256"
+    code_challenge_method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +60,10 @@ pub struct AuthorizeRequest {
     pub redirect_uri: String,
     pub scope: Option<String>,
     pub state: Option<String>,
+    /// PKCE code challenge (RFC 7636)
+    pub code_challenge: Option<String>,
+    /// PKCE code challenge method: "plain" or "S256" (RFC 7636)
+    pub code_challenge_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +75,8 @@ pub struct TokenRequest {
     pub client_secret: Option<String>,
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
+    /// PKCE code verifier (RFC 7636)
+    pub code_verifier: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +170,8 @@ pub async fn oauth2_authorize(
         tenant_id: tenant_id.clone(),
         created_at: now,
         expires_at: now + 600, // 10 minutes
+        code_challenge: params.code_challenge.clone(),
+        code_challenge_method: params.code_challenge_method.clone(),
     };
 
     // Store authorization code
@@ -274,6 +286,35 @@ async fn handle_authorization_code_grant(
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "invalid_grant", "error_description": "Redirect URI mismatch" })),
         ));
+    }
+
+    // Validate PKCE (RFC 7636) if code_challenge was provided
+    if let Some(code_challenge) = &code_data.code_challenge {
+        let code_verifier = params.code_verifier.as_ref().ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid_request",
+                    "error_description": "code_verifier is required when PKCE was used"
+                })),
+            )
+        })?;
+
+        // Validate code_verifier against code_challenge
+        let challenge_method = code_data
+            .code_challenge_method
+            .as_deref()
+            .unwrap_or("plain");
+
+        if !validate_pkce(code_verifier, code_challenge, challenge_method) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid_grant",
+                    "error_description": "PKCE validation failed"
+                })),
+            ));
+        }
     }
 
     // Generate tokens
@@ -545,4 +586,63 @@ pub async fn jwks(
             }
         ]
     })))
+}
+
+/// Validate PKCE code_verifier against code_challenge (RFC 7636)
+fn validate_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> bool {
+    match method {
+        "plain" => {
+            // Plain method: verifier must equal challenge
+            code_verifier == code_challenge
+        }
+        "S256" => {
+            // S256 method: BASE64URL(SHA256(verifier)) must equal challenge
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+            use sha2::{Digest, Sha256};
+
+            let mut hasher = Sha256::new();
+            hasher.update(code_verifier.as_bytes());
+            let hash = hasher.finalize();
+            let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
+
+            computed_challenge == code_challenge
+        }
+        _ => {
+            // Unknown method
+            warn!("Unknown PKCE method: {}", method);
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pkce_plain() {
+        let verifier = "test-verifier-123";
+        let challenge = "test-verifier-123";
+        assert!(validate_pkce(verifier, challenge, "plain"));
+
+        let wrong_challenge = "wrong-challenge";
+        assert!(!validate_pkce(verifier, wrong_challenge, "plain"));
+    }
+
+    #[test]
+    fn test_pkce_s256() {
+        // Test vector from RFC 7636
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+        assert!(validate_pkce(verifier, challenge, "S256"));
+
+        let wrong_challenge = "wrong-challenge";
+        assert!(!validate_pkce(verifier, wrong_challenge, "S256"));
+    }
+
+    #[test]
+    fn test_pkce_unknown_method() {
+        assert!(!validate_pkce("verifier", "challenge", "unknown"));
+    }
 }

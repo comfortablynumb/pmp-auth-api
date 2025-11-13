@@ -1402,6 +1402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tokio",
  "tower",
  "tower-http 0.5.2",
