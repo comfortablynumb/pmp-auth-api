@@ -11,6 +11,10 @@ This API provides:
 - **OpenID Connect Provider**: OIDC identity layer with ID tokens and userinfo endpoint
 - **SAML 2.0 Identity Provider**: Enterprise SSO with SAML IdP functionality
 - **API Key Management**: Long-lived JWT tokens for machine-to-machine authentication
+- **Device Authorization Grant**: RFC 8628 device flow for IoT and limited-input devices
+- **Token Introspection & Revocation**: RFC 7662 and RFC 7009 support
+- **Storage Backend Abstraction**: Pluggable storage (in-memory, PostgreSQL)
+- **Admin API**: REST API for tenant, client, and user management
 - **Identity Backend Abstraction**: Pluggable user storage backends (LDAP, Database, OAuth2, Federated, Mock)
 
 ## Features
@@ -22,9 +26,12 @@ This API provides:
 - **Per-tenant signing keys**: Separate JWK signing keys for each tenant
 
 ### OAuth2 Authorization Server
-- **Grant types**: authorization_code, client_credentials, refresh_token
-- **Token endpoints**: `/oauth/authorize`, `/oauth/token`
+- **Grant types**: authorization_code, client_credentials, refresh_token, device_code (RFC 8628)
+- **Token endpoints**: `/oauth/authorize`, `/oauth/token`, `/oauth/device/authorize`, `/oauth/device/token`
 - **JWKS endpoint**: Public key distribution at `/.well-known/jwks.json`
+- **Token introspection**: RFC 7662 token validation at `/oauth/introspect`
+- **Token revocation**: RFC 7009 token revocation at `/oauth/revoke`
+- **PKCE support**: RFC 7636 Proof Key for Code Exchange
 - **Configurable token expiration**: Access tokens and refresh tokens
 - **Multiple signing algorithms**: RS256, ES256
 
@@ -55,6 +62,30 @@ This API provides:
 - **LDAP Backend**: Active Directory integration - *stub*
 - **Database Backend**: PostgreSQL/MySQL - *stub*
 - **Federated Backend**: Upstream OIDC providers - *stub*
+
+### Device Authorization Grant (RFC 8628)
+- **Device flow for limited-input devices**: Smart TVs, IoT devices, CLI tools
+- **User-friendly codes**: 8-character codes with unambiguous characters (no I, O, 0, 1)
+- **Device endpoints**: Device authorization, token polling, verification, confirmation
+- **Web verification page**: Modern responsive UI at `/device`
+- **Status tracking**: Pending, authorized, denied, expired
+- **Configurable polling interval**: Default 5 seconds
+
+### Storage Backend
+- **Pluggable architecture**: Trait-based storage abstraction
+- **In-memory storage**: Default, no persistence, perfect for development
+- **PostgreSQL storage**: Production-ready with full schema and migrations
+- **Supports**: Authorization codes, refresh tokens, API keys, sessions, device codes, token revocation
+- **Database migrations**: Complete PostgreSQL schema with indexes and cleanup procedures
+- **Future backends**: Redis, MySQL, DynamoDB (extensible design)
+
+### Admin API
+- **Tenant management**: CRUD operations for tenants
+- **Client management**: OAuth2 client registration and management
+- **User management**: Create, update, delete, list users
+- **RESTful design**: Standard HTTP methods (GET, POST, PUT, DELETE)
+- **Validation**: Comprehensive request validation and error handling
+- **Endpoints**: `/api/v1/admin/tenants`, `/api/v1/admin/tenants/{id}/clients`, `/api/v1/admin/tenants/{id}/users`
 
 ### Security & Features
 - JWT-based authentication with JWK signing
@@ -447,6 +478,253 @@ Response:
   "success": true,
   "message": "API key revoked successfully"
 }
+```
+
+### Token Introspection (RFC 7662)
+
+#### Introspect Token
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/introspect
+Content-Type: application/x-www-form-urlencoded
+
+token=access-token-or-refresh-token&
+token_type_hint=access_token
+```
+
+Response:
+```json
+{
+  "active": true,
+  "scope": "read write",
+  "client_id": "client-123",
+  "token_type": "Bearer",
+  "exp": 1234567890,
+  "iat": 1234560000,
+  "sub": "user-id-123",
+  "iss": "https://auth.example.com"
+}
+```
+
+### Token Revocation (RFC 7009)
+
+#### Revoke Token
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/revoke
+Content-Type: application/x-www-form-urlencoded
+
+token=access-token-or-refresh-token&
+token_type_hint=refresh_token
+```
+
+Response: `200 OK` (always returns success per RFC 7009)
+
+### Device Authorization Grant (RFC 8628)
+
+#### Device Authorization Request
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/device/authorize
+Content-Type: application/json
+
+{
+  "client_id": "device-client-id",
+  "scope": "read write"
+}
+```
+
+Response:
+```json
+{
+  "device_code": "uuid-device-code",
+  "user_code": "WDJB-MJHT",
+  "verification_uri": "https://auth.example.com/device",
+  "verification_uri_complete": "https://auth.example.com/device?user_code=WDJB-MJHT",
+  "expires_in": 900,
+  "interval": 5
+}
+```
+
+#### Device Token Polling
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/device/token
+Content-Type: application/json
+
+{
+  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+  "device_code": "uuid-device-code",
+  "client_id": "device-client-id"
+}
+```
+
+Response (when authorized):
+```json
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "refresh-token-here",
+  "scope": "read write"
+}
+```
+
+Response (still pending):
+```json
+{
+  "error": "authorization_pending",
+  "error_description": "User has not yet authorized the device"
+}
+```
+
+#### Device Verification (Internal API)
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/device/verify
+Content-Type: application/json
+
+{
+  "user_code": "WDJB-MJHT"
+}
+```
+
+#### Device Confirmation (Internal API)
+```bash
+POST /api/v1/tenant/{tenant_id}/oauth/device/confirm
+Content-Type: application/json
+
+{
+  "user_code": "WDJB-MJHT",
+  "user_id": "user-123",
+  "authorized": true
+}
+```
+
+### Admin API
+
+#### Tenant Management
+
+##### List Tenants
+```bash
+GET /api/v1/admin/tenants
+```
+
+##### Get Tenant
+```bash
+GET /api/v1/admin/tenants/{tenant_id}
+```
+
+##### Create Tenant
+```bash
+POST /api/v1/admin/tenants
+Content-Type: application/json
+
+{
+  "id": "new-tenant",
+  "name": "New Tenant",
+  "description": "Description",
+  "identity_provider": { ... },
+  "identity_backend": { ... }
+}
+```
+
+##### Update Tenant
+```bash
+PUT /api/v1/admin/tenants/{tenant_id}
+Content-Type: application/json
+
+{
+  "name": "Updated Name",
+  "active": true
+}
+```
+
+##### Delete Tenant
+```bash
+DELETE /api/v1/admin/tenants/{tenant_id}
+```
+
+#### Client Management
+
+##### List Clients
+```bash
+GET /api/v1/admin/tenants/{tenant_id}/clients
+```
+
+##### Create Client
+```bash
+POST /api/v1/admin/tenants/{tenant_id}/clients
+Content-Type: application/json
+
+{
+  "name": "My Application",
+  "redirect_uris": ["https://app.example.com/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "scopes": ["read", "write"]
+}
+```
+
+Response:
+```json
+{
+  "client_id": "client_abc123",
+  "client_secret": "secret_xyz789",
+  "name": "My Application",
+  "redirect_uris": ["https://app.example.com/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "scopes": ["read", "write"],
+  "active": true,
+  "created_at": "2025-01-13T10:00:00Z"
+}
+```
+
+##### Update Client
+```bash
+PUT /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
+Content-Type: application/json
+
+{
+  "name": "Updated Application Name",
+  "active": false
+}
+```
+
+##### Delete Client
+```bash
+DELETE /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
+```
+
+#### User Management
+
+##### List Users
+```bash
+GET /api/v1/admin/tenants/{tenant_id}/users
+```
+
+##### Create User
+```bash
+POST /api/v1/admin/tenants/{tenant_id}/users
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "secure-password",
+  "name": "John Doe",
+  "role": "User"
+}
+```
+
+##### Update User
+```bash
+PUT /api/v1/admin/tenants/{tenant_id}/users/{user_id}
+Content-Type: application/json
+
+{
+  "email": "newemail@example.com",
+  "name": "Jane Doe",
+  "active": true
+}
+```
+
+##### Delete User
+```bash
+DELETE /api/v1/admin/tenants/{tenant_id}/users/{user_id}
 ```
 
 ### Tenant Discovery

@@ -1,8 +1,10 @@
+mod admin;
 mod auth;
 mod config;
 mod handlers;
 mod middleware;
 mod models;
+mod storage;
 
 use axum::{
     Router,
@@ -46,7 +48,9 @@ async fn main() {
     let mut app = Router::new()
         // Health check routes (always available)
         .route("/", get(handlers::health::health_check))
-        .route("/health", get(handlers::health::health_check));
+        .route("/health", get(handlers::health::health_check))
+        // Device authorization page
+        .route("/device", get(handlers::device::device_page));
 
     // Add tenant-specific routes if configuration is available
     if let Some(config) = tenant_config.clone() {
@@ -114,6 +118,78 @@ async fn main() {
                 get(auth::saml_sso_redirect).post(auth::saml_sso_post),
             )
             .route("/api/v1/tenant/:tenant_id/saml/slo", post(auth::saml_slo))
+            // Device Authorization Grant endpoints (RFC 8628)
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/authorize",
+                post(auth::device_authorize),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/token",
+                post(auth::device_token),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/verify",
+                post(auth::device_verify),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/confirm",
+                post(auth::device_confirm),
+            )
+            // Admin API endpoints
+            // Tenant management
+            .route("/api/v1/admin/tenants", get(admin::list_tenants))
+            .route("/api/v1/admin/tenants", post(admin::create_tenant))
+            .route("/api/v1/admin/tenants/:tenant_id", get(admin::get_tenant))
+            .route(
+                "/api/v1/admin/tenants/:tenant_id",
+                axum::routing::put(admin::update_tenant),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id",
+                axum::routing::delete(admin::delete_tenant),
+            )
+            // Client management
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients",
+                get(admin::list_clients),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients",
+                post(admin::create_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                get(admin::get_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                axum::routing::put(admin::update_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                axum::routing::delete(admin::delete_client),
+            )
+            // User management
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users",
+                get(admin::list_users),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users",
+                post(admin::create_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                get(admin::get_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                axum::routing::put(admin::update_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                axum::routing::delete(admin::delete_user),
+            )
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",

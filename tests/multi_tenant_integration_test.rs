@@ -44,7 +44,10 @@ fn test_create_oauth2_tenant_config() {
         },
     );
 
-    let config = AppConfig { tenants };
+    let config = AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    };
 
     assert!(config.validate().is_ok());
     assert_eq!(config.tenants.len(), 1);
@@ -126,7 +129,10 @@ fn test_multiple_tenants_different_providers() {
         },
     );
 
-    let config = AppConfig { tenants };
+    let config = AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    };
 
     assert!(config.validate().is_ok());
     assert_eq!(config.tenants.len(), 2);
@@ -191,7 +197,10 @@ fn test_tenant_with_all_providers() {
         },
     );
 
-    let config = AppConfig { tenants };
+    let config = AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    };
 
     assert!(config.validate().is_ok());
     assert_eq!(config.tenants.len(), 1);
@@ -224,7 +233,10 @@ fn test_config_validation_errors() {
         },
     );
 
-    let config = AppConfig { tenants };
+    let config = AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    };
     let result = config.validate();
     assert!(result.is_err());
     assert!(
@@ -236,6 +248,7 @@ fn test_config_validation_errors() {
     // Test 2: Empty tenants
     let config = AppConfig {
         tenants: HashMap::new(),
+        storage: pmp_auth_api::models::StorageConfig::Memory,
     };
     let result = config.validate();
     assert!(result.is_err());
@@ -277,7 +290,10 @@ fn test_arc_wrapped_config() {
         },
     );
 
-    let config = Arc::new(AppConfig { tenants });
+    let config = Arc::new(AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    });
 
     assert!(config.get_tenant("test-tenant").is_some());
     assert!(config.get_tenant("non-existent").is_none());
@@ -318,7 +334,10 @@ fn test_inactive_tenant() {
         },
     );
 
-    let config = AppConfig { tenants };
+    let config = AppConfig {
+        tenants,
+        storage: pmp_auth_api::models::StorageConfig::Memory,
+    };
 
     assert!(config.validate().is_ok());
 

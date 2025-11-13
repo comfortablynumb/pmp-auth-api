@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod device_flow;
 pub mod identity_backend;
 pub mod jwt;
 pub mod oauth2;
@@ -10,6 +11,7 @@ pub mod strategies;
 pub mod token_introspection;
 
 pub use api_keys::{create_api_key, list_api_keys, revoke_api_key};
+pub use device_flow::{device_authorize, device_confirm, device_token, device_verify};
 #[allow(unused_imports)]
 pub use identity_backend::{BackendUser, IdentityBackendTrait, create_identity_backend};
 pub use jwt::create_token;
