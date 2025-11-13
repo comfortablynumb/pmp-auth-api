@@ -54,12 +54,26 @@ async fn main() {
 
         // Create tenant router with state
         let tenant_router = Router::new()
-            // List available auth strategies for a tenant
+            // List available identity providers for a tenant
             .route(
                 "/api/v1/tenant/:tenant_id/strategies",
                 get(handlers::tenant_auth::list_strategies),
             )
-            // Local auth routes (register/login)
+            // OAuth2 Authorization Server endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/authorize",
+                get(auth::oauth2_authorize),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/token",
+                post(auth::oauth2_token),
+            )
+            // JWKS endpoint for public key distribution
+            .route(
+                "/api/v1/tenant/:tenant_id/.well-known/jwks.json",
+                get(auth::jwks),
+            )
+            // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
                 post(handlers::tenant_auth::register),
@@ -68,7 +82,6 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/login",
                 post(handlers::tenant_auth::login),
             )
-            // OAuth2 routes
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/oauth/login",
                 get(handlers::tenant_auth::oauth2_login),

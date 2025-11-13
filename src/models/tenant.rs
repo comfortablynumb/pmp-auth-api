@@ -10,8 +10,12 @@ pub struct Tenant {
     pub name: String,
     /// Description of the tenant
     pub description: Option<String>,
-    /// Authentication strategies configured for this tenant
-    pub auth_strategies: HashMap<String, AuthStrategy>,
+    /// Identity provider configuration
+    pub identity_provider: IdentityProviderConfig,
+    /// Identity backend for user storage/validation
+    pub identity_backend: IdentityBackend,
+    /// API key configuration (optional)
+    pub api_keys: Option<ApiKeyConfig>,
     /// Whether this tenant is active
     #[serde(default = "default_active")]
     pub active: bool,
@@ -21,66 +25,190 @@ fn default_active() -> bool {
     true
 }
 
-/// Different authentication strategies that can be configured per tenant
+/// Identity provider configuration (what this service provides)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum AuthStrategy {
-    /// JWT authentication using JWK (JSON Web Key) sets
-    JwkJwt(JwkConfig),
-    /// JWT authentication using a shared secret
-    SecretJwt(SecretJwtConfig),
-    /// OAuth2 authentication
-    OAuth2(OAuth2Config),
-    /// Local username/password authentication
-    Local(LocalAuthConfig),
+pub struct IdentityProviderConfig {
+    /// OAuth2 authorization server configuration
+    pub oauth2: Option<OAuth2ServerConfig>,
+    /// OpenID Connect provider configuration
+    pub oidc: Option<OidcProviderConfig>,
+    /// SAML identity provider configuration
+    pub saml: Option<SamlIdpConfig>,
 }
 
-/// Configuration for JWK-based JWT authentication
+/// OAuth2 Authorization Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JwkConfig {
-    /// URL to fetch the JWK Set (JSON Web Key Set)
-    pub jwks_uri: String,
-    /// Expected issuer claim in the JWT
-    pub issuer: Option<String>,
-    /// Expected audience claim in the JWT
-    pub audience: Option<Vec<String>>,
-    /// Cache duration for JWKs in seconds (default: 3600)
-    #[serde(default = "default_jwk_cache_duration")]
-    pub cache_duration_secs: u64,
-    /// Allowed signing algorithms (default: RS256)
-    #[serde(default = "default_algorithms")]
-    pub algorithms: Vec<String>,
+pub struct OAuth2ServerConfig {
+    /// Issuer URL
+    pub issuer: String,
+    /// Supported grant types
+    #[serde(default = "default_grant_types")]
+    pub grant_types: Vec<String>,
+    /// Token endpoint path
+    #[serde(default = "default_token_endpoint")]
+    pub token_endpoint: String,
+    /// Authorization endpoint path
+    #[serde(default = "default_authorize_endpoint")]
+    pub authorize_endpoint: String,
+    /// JWKS endpoint path
+    #[serde(default = "default_jwks_endpoint")]
+    pub jwks_endpoint: String,
+    /// Access token expiration in seconds (default: 3600 = 1 hour)
+    #[serde(default = "default_access_token_expiration")]
+    pub access_token_expiration_secs: i64,
+    /// Refresh token expiration in seconds (default: 2592000 = 30 days)
+    #[serde(default = "default_refresh_token_expiration")]
+    pub refresh_token_expiration_secs: i64,
+    /// JWK signing configuration
+    pub signing_key: JwkSigningConfig,
 }
 
-fn default_jwk_cache_duration() -> u64 {
+fn default_grant_types() -> Vec<String> {
+    vec![
+        "authorization_code".to_string(),
+        "client_credentials".to_string(),
+        "refresh_token".to_string(),
+    ]
+}
+
+fn default_token_endpoint() -> String {
+    "/oauth/token".to_string()
+}
+
+fn default_authorize_endpoint() -> String {
+    "/oauth/authorize".to_string()
+}
+
+fn default_jwks_endpoint() -> String {
+    "/.well-known/jwks.json".to_string()
+}
+
+fn default_access_token_expiration() -> i64 {
     3600
 }
 
-fn default_algorithms() -> Vec<String> {
-    vec!["RS256".to_string()]
+fn default_refresh_token_expiration() -> i64 {
+    2592000
 }
 
-/// Configuration for secret-based JWT authentication
+/// JWK signing configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecretJwtConfig {
-    /// Secret key for signing/verifying JWTs
-    pub secret: String,
-    /// Expected issuer claim in the JWT
-    pub issuer: Option<String>,
-    /// Expected audience claim in the JWT
-    pub audience: Option<Vec<String>>,
-    /// Token expiration in seconds (default: 86400 = 24 hours)
-    #[serde(default = "default_token_expiration")]
-    pub expiration_secs: i64,
+pub struct JwkSigningConfig {
+    /// Algorithm (RS256, ES256, etc.)
+    #[serde(default = "default_signing_algorithm")]
+    pub algorithm: String,
+    /// Key ID
+    pub kid: String,
+    /// Private key path or inline PEM
+    pub private_key: String,
+    /// Public key path or inline PEM
+    pub public_key: String,
 }
 
-fn default_token_expiration() -> i64 {
-    86400
+fn default_signing_algorithm() -> String {
+    "RS256".to_string()
 }
 
-/// Configuration for OAuth2 authentication
+/// OpenID Connect provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuth2Config {
+pub struct OidcProviderConfig {
+    /// Issuer URL (same as OAuth2 but required for OIDC)
+    pub issuer: String,
+    /// UserInfo endpoint path
+    #[serde(default = "default_userinfo_endpoint")]
+    pub userinfo_endpoint: String,
+    /// Supported claims
+    #[serde(default = "default_oidc_claims")]
+    pub claims_supported: Vec<String>,
+    /// Supported scopes
+    #[serde(default = "default_oidc_scopes")]
+    pub scopes_supported: Vec<String>,
+    /// ID token expiration in seconds (default: 3600 = 1 hour)
+    #[serde(default = "default_id_token_expiration")]
+    pub id_token_expiration_secs: i64,
+}
+
+fn default_userinfo_endpoint() -> String {
+    "/oauth/userinfo".to_string()
+}
+
+fn default_oidc_claims() -> Vec<String> {
+    vec![
+        "sub".to_string(),
+        "email".to_string(),
+        "email_verified".to_string(),
+        "name".to_string(),
+        "picture".to_string(),
+    ]
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec![
+        "openid".to_string(),
+        "profile".to_string(),
+        "email".to_string(),
+    ]
+}
+
+fn default_id_token_expiration() -> i64 {
+    3600
+}
+
+/// SAML Identity Provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SamlIdpConfig {
+    /// Entity ID
+    pub entity_id: String,
+    /// SSO URL
+    #[serde(default = "default_sso_url")]
+    pub sso_url: String,
+    /// SLO (Single Logout) URL
+    pub slo_url: Option<String>,
+    /// Certificate (PEM format or path)
+    pub certificate: String,
+    /// Private key (PEM format or path)
+    pub private_key: String,
+    /// Metadata endpoint
+    #[serde(default = "default_metadata_endpoint")]
+    pub metadata_endpoint: String,
+    /// Name ID format
+    #[serde(default = "default_name_id_format")]
+    pub name_id_format: String,
+}
+
+fn default_sso_url() -> String {
+    "/saml/sso".to_string()
+}
+
+fn default_metadata_endpoint() -> String {
+    "/saml/metadata".to_string()
+}
+
+fn default_name_id_format() -> String {
+    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string()
+}
+
+/// Identity backend - where user identities come from
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum IdentityBackend {
+    /// External OAuth2 provider (Google, GitHub, etc.)
+    OAuth2(OAuth2BackendConfig),
+    /// LDAP/Active Directory
+    Ldap(LdapBackendConfig),
+    /// Database (PostgreSQL, MySQL, etc.)
+    Database(DatabaseBackendConfig),
+    /// Federated identity from upstream IdP
+    Federated(FederatedBackendConfig),
+    /// Mock backend for testing
+    Mock(MockBackendConfig),
+}
+
+/// OAuth2 backend configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuth2BackendConfig {
+    /// Provider name (google, github, microsoft, etc.)
+    pub provider: String,
     /// OAuth2 client ID
     pub client_id: String,
     /// OAuth2 client secret
@@ -89,40 +217,123 @@ pub struct OAuth2Config {
     pub auth_url: String,
     /// Token endpoint URL
     pub token_url: String,
-    /// Redirect URI for OAuth2 callback
-    pub redirect_uri: String,
+    /// UserInfo endpoint URL
+    pub userinfo_url: String,
     /// OAuth2 scopes to request
     #[serde(default)]
     pub scopes: Vec<String>,
-    /// User info endpoint URL (optional)
-    pub userinfo_url: Option<String>,
 }
 
-/// Configuration for local username/password authentication
+/// LDAP backend configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalAuthConfig {
-    /// Whether to allow user registration
-    #[serde(default = "default_allow_registration")]
-    pub allow_registration: bool,
-    /// Minimum password length
-    #[serde(default = "default_min_password_length")]
-    pub min_password_length: usize,
-    /// Whether to require email verification
+pub struct LdapBackendConfig {
+    /// LDAP server URL (ldap://... or ldaps://...)
+    pub url: String,
+    /// Bind DN for authentication
+    pub bind_dn: String,
+    /// Bind password
+    pub bind_password: String,
+    /// Base DN for user searches
+    pub base_dn: String,
+    /// User filter (e.g., "(uid={username})")
+    pub user_filter: String,
+    /// Attributes to fetch
+    #[serde(default = "default_ldap_attributes")]
+    pub attributes: Vec<String>,
+}
+
+fn default_ldap_attributes() -> Vec<String> {
+    vec![
+        "uid".to_string(),
+        "mail".to_string(),
+        "cn".to_string(),
+        "displayName".to_string(),
+    ]
+}
+
+/// Database backend configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseBackendConfig {
+    /// Database connection URL
+    pub connection_url: String,
+    /// Database type (postgres, mysql, etc.)
+    pub db_type: String,
+    /// Users table name
+    #[serde(default = "default_users_table")]
+    pub users_table: String,
+    /// ID column name
+    #[serde(default = "default_id_column")]
+    pub id_column: String,
+    /// Email column name
+    #[serde(default = "default_email_column")]
+    pub email_column: String,
+    /// Additional attribute mappings
     #[serde(default)]
-    pub require_email_verification: bool,
-    /// JWT secret for this tenant's local auth
-    pub jwt_secret: String,
-    /// Token expiration in seconds (default: 86400 = 24 hours)
-    #[serde(default = "default_token_expiration")]
+    pub attribute_mappings: HashMap<String, String>,
+}
+
+fn default_users_table() -> String {
+    "users".to_string()
+}
+
+fn default_id_column() -> String {
+    "id".to_string()
+}
+
+fn default_email_column() -> String {
+    "email".to_string()
+}
+
+/// Federated backend configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederatedBackendConfig {
+    /// Upstream IdP type (saml, oidc, etc.)
+    pub idp_type: String,
+    /// SAML metadata URL or configuration
+    pub metadata_url: Option<String>,
+    /// OIDC discovery URL
+    pub discovery_url: Option<String>,
+    /// Client ID (for OIDC)
+    pub client_id: Option<String>,
+    /// Client secret (for OIDC)
+    pub client_secret: Option<String>,
+}
+
+/// Mock backend for testing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MockBackendConfig {
+    /// Predefined users for testing
+    #[serde(default)]
+    pub users: Vec<MockUser>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MockUser {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub attributes: HashMap<String, String>,
+}
+
+/// API Key configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyConfig {
+    /// Whether API keys are enabled
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// API key expiration in seconds (0 = no expiration)
+    #[serde(default)]
     pub expiration_secs: i64,
+    /// Allowed scopes for API keys
+    #[serde(default)]
+    pub allowed_scopes: Vec<String>,
+    /// JWK for signing API keys
+    pub signing_key: JwkSigningConfig,
 }
 
-fn default_allow_registration() -> bool {
+fn default_enabled() -> bool {
     true
-}
-
-fn default_min_password_length() -> usize {
-    8
 }
 
 /// Root configuration structure
@@ -138,13 +349,6 @@ impl AppConfig {
         self.tenants.get(tenant_id)
     }
 
-    /// Get an auth strategy for a tenant
-    pub fn get_auth_strategy(&self, tenant_id: &str, strategy_name: &str) -> Option<&AuthStrategy> {
-        self.get_tenant(tenant_id)?
-            .auth_strategies
-            .get(strategy_name)
-    }
-
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.tenants.is_empty() {
@@ -152,355 +356,93 @@ impl AppConfig {
         }
 
         for (tenant_id, tenant) in &self.tenants {
-            if tenant.auth_strategies.is_empty() {
+            // Check that at least one identity provider is configured
+            if tenant.identity_provider.oauth2.is_none()
+                && tenant.identity_provider.oidc.is_none()
+                && tenant.identity_provider.saml.is_none()
+            {
                 return Err(format!(
-                    "Tenant '{}' must have at least one auth strategy",
+                    "Tenant '{}' must have at least one identity provider configured (oauth2, oidc, or saml)",
                     tenant_id
                 ));
             }
 
-            // Validate each auth strategy
-            for (strategy_name, strategy) in &tenant.auth_strategies {
-                match strategy {
-                    AuthStrategy::JwkJwt(config) => {
-                        if config.jwks_uri.is_empty() {
-                            return Err(format!(
-                                "JWK strategy '{}' for tenant '{}' must have a jwks_uri",
-                                strategy_name, tenant_id
-                            ));
-                        }
+            // Validate OAuth2 server config if present
+            if let Some(oauth2) = &tenant.identity_provider.oauth2
+                && oauth2.issuer.is_empty()
+            {
+                return Err(format!(
+                    "OAuth2 issuer for tenant '{}' cannot be empty",
+                    tenant_id
+                ));
+            }
+
+            // Validate OIDC config if present
+            if let Some(oidc) = &tenant.identity_provider.oidc
+                && oidc.issuer.is_empty()
+            {
+                return Err(format!(
+                    "OIDC issuer for tenant '{}' cannot be empty",
+                    tenant_id
+                ));
+            }
+
+            // Validate SAML config if present
+            if let Some(saml) = &tenant.identity_provider.saml {
+                if saml.entity_id.is_empty() {
+                    return Err(format!(
+                        "SAML entity_id for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
+                if saml.certificate.is_empty() || saml.private_key.is_empty() {
+                    return Err(format!(
+                        "SAML certificate and private_key for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
+            }
+
+            // Validate identity backend
+            match &tenant.identity_backend {
+                IdentityBackend::OAuth2(config) => {
+                    if config.client_id.is_empty() || config.client_secret.is_empty() {
+                        return Err(format!(
+                            "OAuth2 backend for tenant '{}' must have client_id and client_secret",
+                            tenant_id
+                        ));
                     }
-                    AuthStrategy::SecretJwt(config) => {
-                        if config.secret.is_empty() {
-                            return Err(format!(
-                                "Secret JWT strategy '{}' for tenant '{}' must have a secret",
-                                strategy_name, tenant_id
-                            ));
-                        }
+                }
+                IdentityBackend::Ldap(config) => {
+                    if config.url.is_empty() || config.base_dn.is_empty() {
+                        return Err(format!(
+                            "LDAP backend for tenant '{}' must have url and base_dn",
+                            tenant_id
+                        ));
                     }
-                    AuthStrategy::OAuth2(config) => {
-                        if config.client_id.is_empty() || config.client_secret.is_empty() {
-                            return Err(format!(
-                                "OAuth2 strategy '{}' for tenant '{}' must have client_id and client_secret",
-                                strategy_name, tenant_id
-                            ));
-                        }
+                }
+                IdentityBackend::Database(config) => {
+                    if config.connection_url.is_empty() {
+                        return Err(format!(
+                            "Database backend for tenant '{}' must have connection_url",
+                            tenant_id
+                        ));
                     }
-                    AuthStrategy::Local(config) => {
-                        if config.jwt_secret.is_empty() {
-                            return Err(format!(
-                                "Local auth strategy '{}' for tenant '{}' must have a jwt_secret",
-                                strategy_name, tenant_id
-                            ));
-                        }
+                }
+                IdentityBackend::Federated(config) => {
+                    if config.idp_type.is_empty() {
+                        return Err(format!(
+                            "Federated backend for tenant '{}' must have idp_type",
+                            tenant_id
+                        ));
                     }
+                }
+                IdentityBackend::Mock(_) => {
+                    // Mock backend is always valid
                 }
             }
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_local_auth_config_defaults() {
-        let yaml = r#"
-type: local
-jwt_secret: "test-secret"
-"#;
-        let config: LocalAuthConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(config.allow_registration);
-        assert_eq!(config.min_password_length, 8);
-        assert!(!config.require_email_verification);
-        assert_eq!(config.expiration_secs, 86400);
-    }
-
-    #[test]
-    fn test_jwk_config_defaults() {
-        let yaml = r#"
-type: jwkjwt
-jwks_uri: "https://example.com/.well-known/jwks.json"
-"#;
-        let config: JwkConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.cache_duration_secs, 3600);
-        assert_eq!(config.algorithms, vec!["RS256".to_string()]);
-    }
-
-    #[test]
-    fn test_tenant_active_default() {
-        let yaml = r#"
-id: test
-name: Test
-auth_strategies:
-  local:
-    type: local
-    jwt_secret: "secret"
-"#;
-        let tenant: Tenant = serde_yaml::from_str(yaml).unwrap();
-        assert!(tenant.active);
-    }
-
-    #[test]
-    fn test_app_config_get_tenant() {
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test Tenant".to_string(),
-                description: None,
-                auth_strategies: HashMap::new(),
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-
-        assert!(config.get_tenant("test").is_some());
-        assert!(config.get_tenant("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_app_config_get_auth_strategy() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "local".to_string(),
-            AuthStrategy::Local(LocalAuthConfig {
-                allow_registration: true,
-                min_password_length: 8,
-                require_email_verification: false,
-                jwt_secret: "secret".to_string(),
-                expiration_secs: 3600,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test Tenant".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-
-        assert!(config.get_auth_strategy("test", "local").is_some());
-        assert!(config.get_auth_strategy("test", "nonexistent").is_none());
-        assert!(config.get_auth_strategy("nonexistent", "local").is_none());
-    }
-
-    #[test]
-    fn test_validate_empty_jwks_uri() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "auth0".to_string(),
-            AuthStrategy::JwkJwt(JwkConfig {
-                jwks_uri: "".to_string(),
-                issuer: None,
-                audience: None,
-                cache_duration_secs: 3600,
-                algorithms: vec!["RS256".to_string()],
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-        let result = config.validate();
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("jwks_uri"));
-    }
-
-    #[test]
-    fn test_validate_empty_secret_jwt() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "jwt".to_string(),
-            AuthStrategy::SecretJwt(SecretJwtConfig {
-                secret: "".to_string(),
-                issuer: None,
-                audience: None,
-                expiration_secs: 3600,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-        let result = config.validate();
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("secret"));
-    }
-
-    #[test]
-    fn test_validate_oauth2_missing_credentials() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "google".to_string(),
-            AuthStrategy::OAuth2(OAuth2Config {
-                client_id: "".to_string(),
-                client_secret: "secret".to_string(),
-                auth_url: "https://example.com/auth".to_string(),
-                token_url: "https://example.com/token".to_string(),
-                redirect_uri: "https://example.com/callback".to_string(),
-                scopes: vec![],
-                userinfo_url: None,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-        let result = config.validate();
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("client_id"));
-    }
-
-    #[test]
-    fn test_validate_local_auth_empty_secret() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "local".to_string(),
-            AuthStrategy::Local(LocalAuthConfig {
-                allow_registration: true,
-                min_password_length: 8,
-                require_email_verification: false,
-                jwt_secret: "".to_string(),
-                expiration_secs: 3600,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-        let result = config.validate();
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("jwt_secret"));
-    }
-
-    #[test]
-    fn test_validate_valid_config() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "local".to_string(),
-            AuthStrategy::Local(LocalAuthConfig {
-                allow_registration: true,
-                min_password_length: 8,
-                require_email_verification: false,
-                jwt_secret: "valid-secret".to_string(),
-                expiration_secs: 3600,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-        let result = config.validate();
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_multiple_strategies_per_tenant() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "local".to_string(),
-            AuthStrategy::Local(LocalAuthConfig {
-                allow_registration: true,
-                min_password_length: 8,
-                require_email_verification: false,
-                jwt_secret: "secret1".to_string(),
-                expiration_secs: 3600,
-            }),
-        );
-        strategies.insert(
-            "jwt".to_string(),
-            AuthStrategy::SecretJwt(SecretJwtConfig {
-                secret: "secret2".to_string(),
-                issuer: Some("test".to_string()),
-                audience: None,
-                expiration_secs: 3600,
-            }),
-        );
-
-        let mut tenants = HashMap::new();
-        tenants.insert(
-            "test".to_string(),
-            Tenant {
-                id: "test".to_string(),
-                name: "Test".to_string(),
-                description: None,
-                auth_strategies: strategies,
-                active: true,
-            },
-        );
-
-        let config = AppConfig { tenants };
-
-        assert_eq!(config.get_tenant("test").unwrap().auth_strategies.len(), 2);
-        assert!(config.get_auth_strategy("test", "local").is_some());
-        assert!(config.get_auth_strategy("test", "jwt").is_some());
     }
 }
