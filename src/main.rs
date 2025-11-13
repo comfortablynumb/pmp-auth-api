@@ -104,10 +104,7 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/saml/sso",
                 get(auth::saml_sso_redirect).post(auth::saml_sso_post),
             )
-            .route(
-                "/api/v1/tenant/:tenant_id/saml/slo",
-                post(auth::saml_slo),
-            )
+            .route("/api/v1/tenant/:tenant_id/saml/slo", post(auth::saml_slo))
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
