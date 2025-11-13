@@ -73,6 +73,38 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/.well-known/jwks.json",
                 get(auth::jwks),
             )
+            // OpenID Connect endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/.well-known/openid-configuration",
+                get(auth::oidc_discovery),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/userinfo",
+                get(auth::oidc_userinfo),
+            )
+            // API Key Management endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/create",
+                post(auth::create_api_key),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/list",
+                get(auth::list_api_keys),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/:key_id/revoke",
+                post(auth::revoke_api_key),
+            )
+            // SAML 2.0 Identity Provider endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/saml/metadata",
+                get(auth::saml_metadata),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/saml/sso",
+                get(auth::saml_sso_redirect).post(auth::saml_sso_post),
+            )
+            .route("/api/v1/tenant/:tenant_id/saml/slo", post(auth::saml_slo))
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
