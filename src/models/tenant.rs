@@ -336,11 +336,33 @@ fn default_enabled() -> bool {
     true
 }
 
+/// Storage backend configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum StorageConfig {
+    /// In-memory storage (default, no persistence)
+    Memory,
+    /// PostgreSQL database storage
+    Postgres {
+        /// PostgreSQL connection string
+        connection_string: String,
+    },
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        StorageConfig::Memory
+    }
+}
+
 /// Root configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Map of tenant ID to tenant configuration
     pub tenants: HashMap<String, Tenant>,
+    /// Storage backend configuration
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 impl AppConfig {

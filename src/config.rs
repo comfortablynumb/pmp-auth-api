@@ -140,6 +140,7 @@ tenants:
     fn test_config_validation_empty_tenants() {
         let config = AppConfig {
             tenants: HashMap::new(),
+            storage: crate::models::StorageConfig::Memory,
         };
 
         let result = config.validate();
@@ -151,6 +152,7 @@ tenants:
     fn test_config_validation_no_identity_provider() {
         let mut config = AppConfig {
             tenants: HashMap::new(),
+            storage: crate::models::StorageConfig::Memory,
         };
 
         config.tenants.insert(
@@ -213,7 +215,10 @@ tenants:
             },
         );
 
-        let config = AppConfig { tenants };
+        let config = AppConfig {
+            tenants,
+            storage: crate::models::StorageConfig::Memory,
+        };
 
         let tenant = config.get_tenant("test");
         assert!(tenant.is_some());
