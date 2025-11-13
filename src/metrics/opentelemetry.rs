@@ -1,5 +1,7 @@
 use opentelemetry::{global, KeyValue};
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::Resource;
+use std::borrow::Cow;
 use tracing::{error, info};
 
 /// OpenTelemetry configuration
@@ -49,10 +51,14 @@ fn init_metrics(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Using Prometheus exporter for metrics");
     let exporter = opentelemetry_prometheus::exporter()
-        .with_resource(resource)
         .build()?;
 
-    global::set_meter_provider(exporter);
+    let provider = SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(exporter)
+        .build();
+
+    global::set_meter_provider(provider);
     Ok(())
 }
 
@@ -63,12 +69,12 @@ pub fn shutdown_telemetry() {
 }
 
 /// Get a meter for custom metrics
-pub fn get_meter(name: &str) -> opentelemetry::metrics::Meter {
+pub fn get_meter(name: impl Into<Cow<'static, str>>) -> opentelemetry::metrics::Meter {
     global::meter(name)
 }
 
 /// Get a tracer for custom spans
-pub fn get_tracer(name: &str) -> opentelemetry::global::BoxedTracer {
+pub fn get_tracer(name: impl Into<Cow<'static, str>>) -> opentelemetry::global::BoxedTracer {
     global::tracer(name)
 }
 

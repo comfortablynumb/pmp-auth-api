@@ -7,10 +7,10 @@ use tracing::{debug, error, info, warn};
 
 /// LDAP connection wrapper
 pub struct LdapConnection {
-    url: String,
-    bind_dn: Option<String>,
-    bind_password: Option<String>,
-    settings: LdapConnSettings,
+    pub(crate) url: String,
+    pub(crate) bind_dn: Option<String>,
+    pub(crate) bind_password: Option<String>,
+    pub(crate) settings: LdapConnSettings,
 }
 
 impl LdapConnection {
@@ -149,7 +149,8 @@ impl LdapBackendImpl {
             .map_err(|e| {
                 error!("LDAP search failed: {}", e);
                 BackendError::ConnectionError(format!("Search failed: {}", e))
-            })?;
+            })?
+            .success()?;
 
         if rs.is_empty() {
             warn!("No user found with username: {}", username);
@@ -186,7 +187,8 @@ impl LdapBackendImpl {
             .map_err(|e| {
                 error!("LDAP search failed: {}", e);
                 BackendError::ConnectionError(format!("Search failed: {}", e))
-            })?;
+            })?
+            .success()?;
 
         if rs.is_empty() {
             return Err(BackendError::UserNotFound);
@@ -213,7 +215,8 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(&self.config.base_dn, Scope::Subtree, &filter, attributes)
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?
+            .success()?;
 
         if rs.is_empty() {
             return Err(BackendError::UserNotFound);
@@ -240,7 +243,8 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(&self.config.base_dn, Scope::Subtree, &filter, attributes)
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?
+            .success()?;
 
         if rs.is_empty() {
             return Err(BackendError::UserNotFound);
@@ -325,7 +329,8 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(group_base, Scope::Subtree, &filter, vec!["cn", "dn"])
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .success()?;
 
         let groups: Vec<String> = rs
             .into_iter()
@@ -353,7 +358,8 @@ impl LdapBackendImpl {
                 vec!["1.1"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Health check failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Health check failed: {}", e)))?
+            .success()?;
 
         if rs.is_empty() {
             Err(BackendError::ConnectionError(

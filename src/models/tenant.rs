@@ -254,13 +254,13 @@ pub struct LdapBackendConfig {
     pub use_starttls: Option<bool>,
 }
 
-fn default_ldap_attributes() -> Vec<String> {
-    vec![
+fn default_ldap_attributes() -> Option<Vec<String>> {
+    Some(vec![
         "uid".to_string(),
         "mail".to_string(),
         "cn".to_string(),
         "displayName".to_string(),
-    ]
+    ])
 }
 
 /// Database backend configuration

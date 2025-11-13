@@ -46,7 +46,8 @@ impl GroupResolver {
             .map_err(|e| {
                 error!("Failed to fetch group {}: {}", group_dn, e);
                 BackendError::ConnectionError(format!("Group search failed: {}", e))
-            })?;
+            })?
+            .success()?;
 
         if rs.is_empty() {
             return Err(BackendError::UserNotFound);
@@ -76,7 +77,8 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .success()?;
 
         let groups: Vec<GroupInfo> = rs
             .into_iter()
@@ -101,7 +103,8 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass", "description"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group list failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Group list failed: {}", e)))?
+            .success()?;
 
         let groups: Vec<GroupInfo> = rs
             .into_iter()
@@ -125,7 +128,8 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?;
+            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .success()?;
 
         let groups: Vec<GroupInfo> = rs
             .into_iter()
@@ -166,7 +170,7 @@ impl GroupResolver {
 
 /// Nested group resolver with recursive expansion
 pub struct NestedGroupResolver {
-    resolver: GroupResolver,
+    pub resolver: GroupResolver,
     max_depth: usize,
 }
 
@@ -356,7 +360,7 @@ impl NestedGroupResolver {
                     children: Vec::new(),
                 };
 
-                self.build_hierarchy(&mut child_node, visited, depth + 1)
+                Box::pin(self.build_hierarchy(&mut child_node, visited, depth + 1))
                     .await?;
 
                 node.children.push(child_node);

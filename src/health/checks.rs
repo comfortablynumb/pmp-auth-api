@@ -124,7 +124,7 @@ impl HealthCheck for DatabaseHealthCheck {
         let start = std::time::Instant::now();
 
         // Try to perform a simple operation
-        let result = self.storage.list_api_keys("health_check", 1).await;
+        let result = self.storage.list_api_keys("health_check").await;
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -177,7 +177,7 @@ impl HealthCheck for RedisHealthCheck {
         match client.get_multiplexed_async_connection().await {
             Ok(mut conn) => {
                 match redis::cmd("PING")
-                    .query_async::<String>(&mut conn)
+                    .query_async::<_, String>(&mut conn)
                     .await
                 {
                     Ok(_) => {
