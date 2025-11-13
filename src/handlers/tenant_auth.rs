@@ -59,7 +59,9 @@ pub async fn oauth2_login(
 
 #[derive(Debug, Deserialize)]
 pub struct OAuth2CallbackQuery {
+    #[allow(dead_code)]
     code: String,
+    #[allow(dead_code)]
     state: String,
 }
 

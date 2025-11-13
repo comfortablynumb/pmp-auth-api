@@ -1,7 +1,7 @@
 // Temporary stub file - old tenant auth middleware removed
 // Will be replaced with OAuth2/OIDC/SAML token validation
 
-use crate::models::{AppConfig, Claims, UserRole};
+use crate::models::{AppConfig, Claims};
 use axum::Json;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;

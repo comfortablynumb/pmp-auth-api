@@ -1,9 +1,14 @@
 pub mod tenant;
 pub mod user;
 
-pub use tenant::{
-    ApiKeyConfig, AppConfig, DatabaseBackendConfig, FederatedBackendConfig, IdentityBackend,
-    IdentityProviderConfig, JwkSigningConfig, LdapBackendConfig, MockBackendConfig, MockUser,
-    OAuth2BackendConfig, OAuth2ServerConfig, OidcProviderConfig, SamlIdpConfig, Tenant,
-};
+// Re-export commonly used types
+pub use tenant::{AppConfig, IdentityBackend, OAuth2ServerConfig};
 pub use user::{AuthResponse, Claims, LoginRequest, RegisterRequest, User, UserInfo, UserRole};
+
+// Additional exports for tests and library users
+#[allow(unused_imports)]
+pub use tenant::{
+    ApiKeyConfig, DatabaseBackendConfig, FederatedBackendConfig, IdentityProviderConfig,
+    JwkSigningConfig, LdapBackendConfig, MockBackendConfig, MockUser, OAuth2BackendConfig,
+    OidcProviderConfig, SamlIdpConfig, Tenant,
+};

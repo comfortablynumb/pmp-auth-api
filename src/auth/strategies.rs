@@ -1,6 +1,8 @@
 // Temporary stub file - old auth strategies removed
 // Will be replaced with OAuth2/OIDC/SAML token generation
 
+#![allow(dead_code)]
+
 use crate::models::{Claims, UserRole};
 
 /// Stub: Create local token (removed - no local auth)

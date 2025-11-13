@@ -1,6 +1,8 @@
 // Temporary stub file - old OAuth2 client flow removed
 // Will be replaced with OAuth2 authorization server implementation
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
