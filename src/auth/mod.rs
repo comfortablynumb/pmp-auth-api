@@ -7,6 +7,7 @@ pub mod oidc;
 pub mod password;
 pub mod saml;
 pub mod strategies;
+pub mod token_introspection;
 
 pub use api_keys::{create_api_key, list_api_keys, revoke_api_key};
 #[allow(unused_imports)]
@@ -16,3 +17,4 @@ pub use oauth2_server::{jwks, oauth2_authorize, oauth2_token};
 pub use oidc::{oidc_discovery, oidc_userinfo};
 pub use password::{hash_password, verify_password};
 pub use saml::{saml_metadata, saml_slo, saml_sso_post, saml_sso_redirect};
+pub use token_introspection::{token_introspect, token_revoke};

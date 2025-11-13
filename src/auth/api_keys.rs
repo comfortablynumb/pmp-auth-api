@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 // In-memory storage for API keys (in production, use a database)
 lazy_static::lazy_static! {
-    static ref API_KEYS: Arc<Mutex<HashMap<String, ApiKeyMetadata>>> =
+    pub static ref API_KEYS: Arc<Mutex<HashMap<String, ApiKeyMetadata>>> =
         Arc::new(Mutex::new(HashMap::new()));
 }
 

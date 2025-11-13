@@ -68,6 +68,15 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/oauth/token",
                 post(auth::oauth2_token),
             )
+            // Token Introspection and Revocation endpoints (RFC 7662, RFC 7009)
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/introspect",
+                post(auth::token_introspect),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/revoke",
+                post(auth::token_revoke),
+            )
             // JWKS endpoint for public key distribution
             .route(
                 "/api/v1/tenant/:tenant_id/.well-known/jwks.json",

@@ -23,6 +23,7 @@ oauth2 = "4"
 alcoholic_jwt = "4091"
 base64 = "0.22"
 flate2 = "1.0"
+sha2 = "0.10"
 
 # Environment variables
 dotenvy = "0.15"
