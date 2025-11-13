@@ -597,7 +597,7 @@ fn validate_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> boo
         }
         "S256" => {
             // S256 method: BASE64URL(SHA256(verifier)) must equal challenge
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
             use sha2::{Digest, Sha256};
 
             let mut hasher = Sha256::new();
