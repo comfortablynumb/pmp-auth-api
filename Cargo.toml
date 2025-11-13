@@ -47,6 +47,9 @@ async-trait = "0.1"
 # Lazy static for global state
 lazy_static = "1.4"
 
+# Random number generation
+rand = "0.8"
+
 [dev-dependencies]
 # Testing
 tower = { version = "0.5", features = ["util"] }

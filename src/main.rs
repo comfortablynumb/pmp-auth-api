@@ -48,7 +48,9 @@ async fn main() {
     let mut app = Router::new()
         // Health check routes (always available)
         .route("/", get(handlers::health::health_check))
-        .route("/health", get(handlers::health::health_check));
+        .route("/health", get(handlers::health::health_check))
+        // Device authorization page
+        .route("/device", get(handlers::device::device_page));
 
     // Add tenant-specific routes if configuration is available
     if let Some(config) = tenant_config.clone() {
@@ -116,6 +118,23 @@ async fn main() {
                 get(auth::saml_sso_redirect).post(auth::saml_sso_post),
             )
             .route("/api/v1/tenant/:tenant_id/saml/slo", post(auth::saml_slo))
+            // Device Authorization Grant endpoints (RFC 8628)
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/authorize",
+                post(auth::device_authorize),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/token",
+                post(auth::device_token),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/verify",
+                post(auth::device_verify),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/device/confirm",
+                post(auth::device_confirm),
+            )
             // Admin API endpoints
             // Tenant management
             .route("/api/v1/admin/tenants", get(admin::list_tenants))

@@ -1398,6 +1398,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "oauth2",
+ "rand",
  "reqwest 0.12.24",
  "serde",
  "serde_json",

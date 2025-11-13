@@ -458,7 +458,7 @@ async fn handle_refresh_token_grant(
 }
 
 /// Generate an access token (JWT)
-fn generate_access_token(
+pub fn generate_access_token(
     user_id: &str,
     email: &str,
     role: UserRole,
