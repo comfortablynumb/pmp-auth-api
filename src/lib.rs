@@ -7,4 +7,5 @@ pub mod handlers;
 pub mod mfa;
 pub mod middleware;
 pub mod models;
+pub mod session;
 pub mod storage;
