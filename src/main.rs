@@ -73,6 +73,15 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/.well-known/jwks.json",
                 get(auth::jwks),
             )
+            // OpenID Connect endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/.well-known/openid-configuration",
+                get(auth::oidc_discovery),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/oauth/userinfo",
+                get(auth::oidc_userinfo),
+            )
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
