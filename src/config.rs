@@ -26,15 +26,32 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Arc<AppConfig>, String> {
     );
 
     for (tenant_id, tenant) in &config.tenants {
+        let mut providers = Vec::new();
+        if tenant.identity_provider.oauth2.is_some() {
+            providers.push("OAuth2");
+        }
+        if tenant.identity_provider.oidc.is_some() {
+            providers.push("OIDC");
+        }
+        if tenant.identity_provider.saml.is_some() {
+            providers.push("SAML");
+        }
+
+        let backend_type = match &tenant.identity_backend {
+            crate::models::IdentityBackend::OAuth2(_) => "OAuth2",
+            crate::models::IdentityBackend::Ldap(_) => "LDAP",
+            crate::models::IdentityBackend::Database(_) => "Database",
+            crate::models::IdentityBackend::Federated(_) => "Federated",
+            crate::models::IdentityBackend::Mock(_) => "Mock",
+        };
+
         info!(
-            "  Tenant '{}' ({}): {} auth strategy(ies)",
+            "  Tenant '{}' ({}): Providers: [{}], Backend: {}",
             tenant_id,
             tenant.name,
-            tenant.auth_strategies.len()
+            providers.join(", "),
+            backend_type
         );
-        for strategy_name in tenant.auth_strategies.keys() {
-            info!("    - {}", strategy_name);
-        }
     }
 
     Ok(Arc::new(config))
@@ -76,7 +93,10 @@ pub fn load_config_with_fallback() -> Result<Arc<AppConfig>, String> {
 mod tests {
     use super::*;
     use crate::models::tenant::Tenant;
-    use crate::models::{AuthStrategy, LocalAuthConfig};
+    use crate::models::{
+        IdentityBackend, IdentityProviderConfig, JwkSigningConfig, MockBackendConfig,
+        OAuth2ServerConfig,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -87,13 +107,24 @@ tenants:
     id: test-tenant
     name: "Test Tenant"
     active: true
-    auth_strategies:
-      local:
-        type: local
-        allow_registration: true
-        min_password_length: 8
-        jwt_secret: "test-secret"
-        expiration_secs: 3600
+    identity_provider:
+      oauth2:
+        issuer: "https://test.example.com"
+        grant_types:
+          - "authorization_code"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "test-key"
+          private_key: "/path/to/private.pem"
+          public_key: "/path/to/public.pem"
+    identity_backend:
+      type: mock
+      users: []
 "#;
 
         let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
@@ -102,7 +133,7 @@ tenants:
 
         let tenant = config.get_tenant("test-tenant").unwrap();
         assert_eq!(tenant.name, "Test Tenant");
-        assert_eq!(tenant.auth_strategies.len(), 1);
+        assert!(tenant.identity_provider.oauth2.is_some());
     }
 
     #[test]
@@ -117,7 +148,7 @@ tenants:
     }
 
     #[test]
-    fn test_config_validation_empty_strategies() {
+    fn test_config_validation_no_identity_provider() {
         let mut config = AppConfig {
             tenants: HashMap::new(),
         };
@@ -128,30 +159,28 @@ tenants:
                 id: "test".to_string(),
                 name: "Test".to_string(),
                 description: None,
-                auth_strategies: HashMap::new(),
+                identity_provider: IdentityProviderConfig {
+                    oauth2: None,
+                    oidc: None,
+                    saml: None,
+                },
+                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
+                api_keys: None,
                 active: true,
             },
         );
 
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("at least one auth strategy"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("at least one identity provider")
+        );
     }
 
     #[test]
-    fn test_config_get_auth_strategy() {
-        let mut strategies = HashMap::new();
-        strategies.insert(
-            "local".to_string(),
-            AuthStrategy::Local(LocalAuthConfig {
-                allow_registration: true,
-                min_password_length: 8,
-                require_email_verification: false,
-                jwt_secret: "secret".to_string(),
-                expiration_secs: 3600,
-            }),
-        );
-
+    fn test_config_get_tenant() {
         let mut tenants = HashMap::new();
         tenants.insert(
             "test".to_string(),
@@ -159,20 +188,37 @@ tenants:
                 id: "test".to_string(),
                 name: "Test".to_string(),
                 description: None,
-                auth_strategies: strategies,
+                identity_provider: IdentityProviderConfig {
+                    oauth2: Some(OAuth2ServerConfig {
+                        issuer: "https://test.example.com".to_string(),
+                        grant_types: vec!["authorization_code".to_string()],
+                        token_endpoint: "/oauth/token".to_string(),
+                        authorize_endpoint: "/oauth/authorize".to_string(),
+                        jwks_endpoint: "/.well-known/jwks.json".to_string(),
+                        access_token_expiration_secs: 3600,
+                        refresh_token_expiration_secs: 86400,
+                        signing_key: JwkSigningConfig {
+                            algorithm: "RS256".to_string(),
+                            kid: "test-key".to_string(),
+                            private_key: "/path/to/private.pem".to_string(),
+                            public_key: "/path/to/public.pem".to_string(),
+                        },
+                    }),
+                    oidc: None,
+                    saml: None,
+                },
+                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
+                api_keys: None,
                 active: true,
             },
         );
 
         let config = AppConfig { tenants };
 
-        let strategy = config.get_auth_strategy("test", "local");
-        assert!(strategy.is_some());
+        let tenant = config.get_tenant("test");
+        assert!(tenant.is_some());
 
-        let missing = config.get_auth_strategy("test", "missing");
-        assert!(missing.is_none());
-
-        let missing_tenant = config.get_auth_strategy("missing", "local");
+        let missing_tenant = config.get_tenant("missing");
         assert!(missing_tenant.is_none());
     }
 }

@@ -1,142 +1,383 @@
-# Multi-tenant Authentication API Configuration Example
+# Multi-tenant OAuth2/OIDC/SAML Authentication Provider Configuration
+#
+# This API acts as an OAuth2 Authorization Server, OpenID Connect Provider,
+# and SAML Identity Provider. It supports multiple identity backends for
+# user storage and validation.
 
 tenants:
-  # Example tenant 1: Using JWK-based JWT authentication
+  # Example 1: OAuth2 + OIDC Provider with OAuth2 Backend (Google)
   acme-corp:
     id: acme-corp
     name: "ACME Corporation"
-    description: "ACME Corp's authentication configuration"
+    description: "OAuth2/OIDC provider backed by Google accounts"
     active: true
-    auth_strategies:
-      # Strategy 1: JWT with JWK validation (e.g., Auth0, Okta)
-      auth0:
-        type: jwkjwt
-        jwks_uri: "https://your-domain.auth0.com/.well-known/jwks.json"
-        issuer: "https://your-domain.auth0.com/"
-        audience:
-          - "https://api.acme-corp.com"
-        cache_duration_secs: 3600
-        algorithms:
-          - "RS256"
 
-      # Strategy 2: Local authentication with username/password
-      local:
-        type: local
-        allow_registration: true
-        min_password_length: 10
-        require_email_verification: false
-        jwt_secret: "acme-corp-secret-key-change-in-production"
-        expiration_secs: 86400
+    # What this service provides to client applications
+    identity_provider:
+      # OAuth2 Authorization Server configuration
+      oauth2:
+        issuer: "https://auth.acme-corp.com"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+          - "refresh_token"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600      # 1 hour
+        refresh_token_expiration_secs: 2592000  # 30 days
+        signing_key:
+          algorithm: "RS256"
+          kid: "acme-corp-2024-01"
+          private_key: "/path/to/private-key.pem"
+          public_key: "/path/to/public-key.pem"
 
-  # Example tenant 2: Using OAuth2
+      # OpenID Connect Provider configuration
+      oidc:
+        issuer: "https://auth.acme-corp.com"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "email_verified"
+          - "name"
+          - "picture"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600  # 1 hour
+
+    # Where user identities come from
+    identity_backend:
+      type: oauth2
+      provider: "google"
+      client_id: "your-google-client-id.apps.googleusercontent.com"
+      client_secret: "your-google-client-secret"
+      auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+      token_url: "https://oauth2.googleapis.com/token"
+      userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo"
+      scopes:
+        - "openid"
+        - "email"
+        - "profile"
+
+    # API Key support (optional)
+    api_keys:
+      enabled: true
+      expiration_secs: 0  # 0 = no expiration
+      allowed_scopes:
+        - "api:read"
+        - "api:write"
+      signing_key:
+        algorithm: "RS256"
+        kid: "acme-api-key-2024"
+        private_key: "/path/to/api-key-private.pem"
+        public_key: "/path/to/api-key-public.pem"
+
+  # Example 2: SAML IdP with LDAP Backend
   globex:
     id: globex
     name: "Globex Corporation"
-    description: "Globex OAuth2 setup"
+    description: "SAML Identity Provider backed by Active Directory"
     active: true
-    auth_strategies:
-      # OAuth2 with Google
-      google-oauth:
-        type: oauth2
-        client_id: "your-google-client-id.apps.googleusercontent.com"
-        client_secret: "your-google-client-secret"
-        auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
-        token_url: "https://oauth2.googleapis.com/token"
-        redirect_uri: "https://api.globex.com/api/v1/tenant/globex/auth/google-oauth/callback"
-        scopes:
-          - "openid"
-          - "email"
-          - "profile"
-        userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo"
 
-      # Local auth as fallback
-      local:
-        type: local
-        allow_registration: true
-        min_password_length: 8
-        require_email_verification: true
-        jwt_secret: "globex-secret-key-change-in-production"
-        expiration_secs: 86400
+    identity_provider:
+      # SAML Identity Provider
+      saml:
+        entity_id: "https://auth.globex.com/saml"
+        sso_url: "/saml/sso"
+        slo_url: "/saml/slo"
+        certificate: |
+          -----BEGIN CERTIFICATE-----
+          MIIDXTCCAkWgAwIBAgIJAKxpK...
+          -----END CERTIFICATE-----
+        private_key: "/path/to/saml-private-key.pem"
+        metadata_endpoint: "/saml/metadata"
+        name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 
-  # Example tenant 3: Using secret-based JWT (simple shared secret)
+    # LDAP/Active Directory backend
+    identity_backend:
+      type: ldap
+      url: "ldaps://ldap.globex.com:636"
+      bind_dn: "cn=service-account,ou=users,dc=globex,dc=com"
+      bind_password: "service-account-password"
+      base_dn: "ou=users,dc=globex,dc=com"
+      user_filter: "(uid={username})"
+      attributes:
+        - "uid"
+        - "mail"
+        - "cn"
+        - "displayName"
+        - "memberOf"
+
+    api_keys:
+      enabled: true
+      expiration_secs: 31536000  # 1 year
+      allowed_scopes:
+        - "api:read"
+      signing_key:
+        algorithm: "ES256"
+        kid: "globex-api-2024"
+        private_key: "/path/to/globex-api-private.pem"
+        public_key: "/path/to/globex-api-public.pem"
+
+  # Example 3: OAuth2 + OIDC with Database Backend
   initech:
     id: initech
     name: "Initech"
-    description: "Simple JWT authentication"
+    description: "OAuth2/OIDC provider with PostgreSQL backend"
     active: true
-    auth_strategies:
-      # Simple JWT with shared secret
-      jwt:
-        type: secretjwt
-        secret: "initech-super-secret-key-change-in-production"
-        issuer: "initech-auth-api"
-        audience:
-          - "initech-api"
-        expiration_secs: 43200  # 12 hours
 
-  # Example tenant 4: Multiple OAuth2 providers
+    identity_provider:
+      oauth2:
+        issuer: "https://auth.initech.com"
+        grant_types:
+          - "authorization_code"
+          - "password"  # Resource Owner Password Credentials
+          - "client_credentials"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 7200
+        refresh_token_expiration_secs: 604800  # 7 days
+        signing_key:
+          algorithm: "RS256"
+          kid: "initech-2024"
+          private_key: "/path/to/initech-private.pem"
+          public_key: "/path/to/initech-public.pem"
+
+      oidc:
+        issuer: "https://auth.initech.com"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "name"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600
+
+    # Database backend
+    identity_backend:
+      type: database
+      connection_url: "postgresql://user:password@localhost:5432/initech_users"
+      db_type: "postgres"
+      users_table: "users"
+      id_column: "id"
+      email_column: "email"
+      attribute_mappings:
+        name: "full_name"
+        picture: "avatar_url"
+        phone: "phone_number"
+
+  # Example 4: Full OAuth2/OIDC/SAML with Federated Backend
   umbrella:
     id: umbrella
     name: "Umbrella Corporation"
-    description: "Multiple OAuth2 providers"
+    description: "Full IdP suite with upstream federation"
     active: true
-    auth_strategies:
-      # GitHub OAuth2
-      github:
-        type: oauth2
-        client_id: "your-github-client-id"
-        client_secret: "your-github-client-secret"
-        auth_url: "https://github.com/login/oauth/authorize"
-        token_url: "https://github.com/login/oauth/access_token"
-        redirect_uri: "https://api.umbrella.com/api/v1/tenant/umbrella/auth/github/callback"
-        scopes:
-          - "user:email"
-          - "read:user"
-        userinfo_url: "https://api.github.com/user"
 
-      # Microsoft OAuth2
-      microsoft:
-        type: oauth2
-        client_id: "your-microsoft-client-id"
-        client_secret: "your-microsoft-client-secret"
-        auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-        token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-        redirect_uri: "https://api.umbrella.com/api/v1/tenant/umbrella/auth/microsoft/callback"
-        scopes:
-          - "openid"
+    identity_provider:
+      oauth2:
+        issuer: "https://auth.umbrella.com"
+        grant_types:
+          - "authorization_code"
+          - "implicit"
+          - "client_credentials"
+          - "refresh_token"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 2592000
+        signing_key:
+          algorithm: "RS256"
+          kid: "umbrella-2024-primary"
+          private_key: "/path/to/umbrella-private.pem"
+          public_key: "/path/to/umbrella-public.pem"
+
+      oidc:
+        issuer: "https://auth.umbrella.com"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
           - "email"
+          - "email_verified"
+          - "name"
+          - "picture"
+          - "groups"
+        scopes_supported:
+          - "openid"
           - "profile"
-        userinfo_url: "https://graph.microsoft.com/v1.0/me"
+          - "email"
+          - "groups"
+        id_token_expiration_secs: 3600
 
-      # Local authentication
-      local:
-        type: local
-        allow_registration: false  # Only admins can create accounts
-        min_password_length: 12
-        require_email_verification: true
-        jwt_secret: "umbrella-secret-key-change-in-production"
-        expiration_secs: 28800  # 8 hours
+      saml:
+        entity_id: "https://auth.umbrella.com/saml"
+        sso_url: "/saml/sso"
+        slo_url: "/saml/slo"
+        certificate: "/path/to/saml-cert.pem"
+        private_key: "/path/to/saml-key.pem"
+        metadata_endpoint: "/saml/metadata"
+        name_id_format: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
 
-# URL patterns for this configuration:
+    # Federated backend (upstream OIDC provider)
+    identity_backend:
+      type: federated
+      idp_type: "oidc"
+      discovery_url: "https://upstream-idp.example.com/.well-known/openid-configuration"
+      client_id: "umbrella-corp-client"
+      client_secret: "umbrella-client-secret"
+
+    api_keys:
+      enabled: true
+      expiration_secs: 7776000  # 90 days
+      allowed_scopes:
+        - "api:read"
+        - "api:write"
+        - "api:admin"
+      signing_key:
+        algorithm: "RS256"
+        kid: "umbrella-api-2024"
+        private_key: "/path/to/umbrella-api-private.pem"
+        public_key: "/path/to/umbrella-api-public.pem"
+
+  # Example 5: OAuth2 with Multiple Backend Options (GitHub)
+  stark-industries:
+    id: stark-industries
+    name: "Stark Industries"
+    description: "OAuth2 server backed by GitHub"
+    active: true
+
+    identity_provider:
+      oauth2:
+        issuer: "https://auth.stark-industries.com"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 1296000  # 15 days
+        signing_key:
+          algorithm: "RS256"
+          kid: "stark-2024"
+          private_key: "/path/to/stark-private.pem"
+          public_key: "/path/to/stark-public.pem"
+
+    identity_backend:
+      type: oauth2
+      provider: "github"
+      client_id: "stark-github-client-id"
+      client_secret: "stark-github-client-secret"
+      auth_url: "https://github.com/login/oauth/authorize"
+      token_url: "https://github.com/login/oauth/access_token"
+      userinfo_url: "https://api.github.com/user"
+      scopes:
+        - "user:email"
+        - "read:user"
+
+  # Example 6: Mock backend for testing and development
+  test-tenant:
+    id: test-tenant
+    name: "Test Tenant"
+    description: "Mock backend for testing"
+    active: true
+
+    identity_provider:
+      oauth2:
+        issuer: "https://test.example.com"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "test-2024"
+          private_key: "/path/to/test-private.pem"
+          public_key: "/path/to/test-public.pem"
+
+      oidc:
+        issuer: "https://test.example.com"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "name"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600
+
+    # Mock backend with predefined test users
+    identity_backend:
+      type: mock
+      users:
+        - id: "test-user-1"
+          email: "alice@example.com"
+          name: "Alice Test"
+          attributes:
+            role: "admin"
+            department: "engineering"
+        - id: "test-user-2"
+          email: "bob@example.com"
+          name: "Bob Test"
+          attributes:
+            role: "user"
+            department: "sales"
+        - id: "test-user-3"
+          email: "charlie@example.com"
+          name: "Charlie Test"
+          attributes:
+            role: "user"
+            department: "marketing"
+
+    api_keys:
+      enabled: true
+      expiration_secs: 0  # No expiration for testing
+      allowed_scopes:
+        - "test:read"
+        - "test:write"
+      signing_key:
+        algorithm: "RS256"
+        kid: "test-api-2024"
+        private_key: "/path/to/test-api-private.pem"
+        public_key: "/path/to/test-api-public.pem"
+
+# OAuth2/OIDC Endpoints (per tenant):
 #
-# ACME Corp Local Auth:
-#   - POST /api/v1/tenant/acme-corp/auth/local/register
-#   - POST /api/v1/tenant/acme-corp/auth/local/login
+# Discovery:
+#   - GET  /api/v1/tenant/{tenant_id}/.well-known/openid-configuration
+#   - GET  /api/v1/tenant/{tenant_id}/.well-known/jwks.json
 #
-# ACME Corp Auth0 JWT:
-#   - Protected endpoints use: Authorization: Bearer <auth0-jwt-token>
-#   - Validates against: /api/v1/tenant/acme-corp/auth/auth0/*
+# OAuth2 Authorization Server:
+#   - GET  /api/v1/tenant/{tenant_id}/oauth/authorize
+#   - POST /api/v1/tenant/{tenant_id}/oauth/token
+#   - POST /api/v1/tenant/{tenant_id}/oauth/revoke
 #
-# Globex Google OAuth:
-#   - GET  /api/v1/tenant/globex/auth/google-oauth/login (initiates OAuth flow)
-#   - GET  /api/v1/tenant/globex/auth/google-oauth/callback (OAuth callback)
+# OpenID Connect:
+#   - GET  /api/v1/tenant/{tenant_id}/oauth/userinfo
 #
-# Initech Simple JWT:
-#   - POST /api/v1/tenant/initech/auth/jwt/login
+# SAML Identity Provider:
+#   - GET  /api/v1/tenant/{tenant_id}/saml/metadata
+#   - POST /api/v1/tenant/{tenant_id}/saml/sso
+#   - POST /api/v1/tenant/{tenant_id}/saml/slo
 #
-# Umbrella Multiple Providers:
-#   - GET  /api/v1/tenant/umbrella/auth/github/login
-#   - GET  /api/v1/tenant/umbrella/auth/github/callback
-#   - GET  /api/v1/tenant/umbrella/auth/microsoft/login
-#   - GET  /api/v1/tenant/umbrella/auth/microsoft/callback
-#   - POST /api/v1/tenant/umbrella/auth/local/login
+# API Key Management:
+#   - POST /api/v1/tenant/{tenant_id}/api-keys/create
+#   - POST /api/v1/tenant/{tenant_id}/api-keys/revoke
+#   - GET  /api/v1/tenant/{tenant_id}/api-keys/list
+#
+# Identity Backend Management (Admin):
+#   - POST /api/v1/tenant/{tenant_id}/admin/users/sync
+#   - GET  /api/v1/tenant/{tenant_id}/admin/users/search
