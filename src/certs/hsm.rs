@@ -136,13 +136,13 @@ impl HsmProvider for SoftwareHsmProvider {
                 (enc, dec, public_pem.into_bytes())
             }
             Algorithm::ES256 | Algorithm::ES384 => {
-                params.alg = match algorithm {
+                let alg = match algorithm {
                     Algorithm::ES256 => &rcgen::PKCS_ECDSA_P256_SHA256,
                     Algorithm::ES384 => &rcgen::PKCS_ECDSA_P384_SHA384,
                     _ => return Err("Unsupported EC algorithm".into()),
                 };
 
-                let key_pair = rcgen::KeyPair::generate_for(params.alg)?;
+                let key_pair = rcgen::KeyPair::generate_for(alg)?;
                 let cert = params.self_signed(&key_pair)?;
 
                 let private_pem = key_pair.serialize_pem();

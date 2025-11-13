@@ -19,23 +19,23 @@ impl TokenMetrics {
         let tokens_issued = meter
             .u64_counter("tokens.issued")
             .with_description("Total number of tokens issued")
-            .build();
+            .init();
 
         let tokens_revoked = meter
             .u64_counter("tokens.revoked")
             .with_description("Total number of tokens revoked")
-            .build();
+            .init();
 
         let token_generation_duration = meter
             .f64_histogram("tokens.generation.duration")
             .with_description("Token generation duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         let active_tokens = meter
             .i64_up_down_counter("tokens.active")
             .with_description("Number of currently active tokens")
-            .build();
+            .init();
 
         Self {
             meter,
@@ -106,23 +106,23 @@ impl AuthMetrics {
         let auth_attempts = meter
             .u64_counter("auth.attempts")
             .with_description("Total authentication attempts")
-            .build();
+            .init();
 
         let auth_successes = meter
             .u64_counter("auth.successes")
             .with_description("Successful authentications")
-            .build();
+            .init();
 
         let auth_failures = meter
             .u64_counter("auth.failures")
             .with_description("Failed authentications")
-            .build();
+            .init();
 
         let auth_duration = meter
             .f64_histogram("auth.duration")
             .with_description("Authentication duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         Self {
             meter,
@@ -185,12 +185,12 @@ impl ErrorMetrics {
         let errors_total = meter
             .u64_counter("errors.total")
             .with_description("Total errors encountered")
-            .build();
+            .init();
 
         let rate_limit_hits = meter
             .u64_counter("rate_limit.hits")
             .with_description("Total rate limit hits")
-            .build();
+            .init();
 
         Self {
             meter,
@@ -236,25 +236,25 @@ impl LatencyMetrics {
             .f64_histogram("http.request.duration")
             .with_description("HTTP request duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         let db_query_duration = meter
             .f64_histogram("db.query.duration")
             .with_description("Database query duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         let ldap_query_duration = meter
             .f64_histogram("ldap.query.duration")
             .with_description("LDAP query duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         let external_call_duration = meter
             .f64_histogram("external.call.duration")
             .with_description("External API call duration in seconds")
             .with_unit("s")
-            .build();
+            .init();
 
         Self {
             meter,

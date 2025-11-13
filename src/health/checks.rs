@@ -176,8 +176,10 @@ impl HealthCheck for RedisHealthCheck {
 
         match client.get_multiplexed_async_connection().await {
             Ok(mut conn) => {
-                use redis::AsyncCommands;
-                match conn.ping::<String>().await {
+                match redis::cmd("PING")
+                    .query_async::<String>(&mut conn)
+                    .await
+                {
                     Ok(_) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
                         HealthCheckResult::healthy("redis".to_string(), duration_ms)
