@@ -176,11 +176,7 @@ impl StorageBackend for MemoryStorage {
     }
 
     // Session operations
-    async fn store_session(
-        &self,
-        session_id: &str,
-        data: SessionData,
-    ) -> Result<(), StorageError> {
+    async fn store_session(&self, session_id: &str, data: SessionData) -> Result<(), StorageError> {
         let mut sessions = self
             .sessions
             .lock()
@@ -456,7 +452,10 @@ mod tests {
         assert_eq!(retrieved.unwrap().status, DeviceCodeStatus::Pending);
 
         // Get by user code
-        let retrieved = storage.get_device_code_by_user_code(user_code).await.unwrap();
+        let retrieved = storage
+            .get_device_code_by_user_code(user_code)
+            .await
+            .unwrap();
         assert!(retrieved.is_some());
 
         // Update
@@ -502,10 +501,7 @@ mod tests {
         // Add expired token
         let expired_jti = "expired_token";
         let expired_at = Utc::now() - chrono::Duration::hours(1);
-        storage
-            .revoke_token(expired_jti, expired_at)
-            .await
-            .unwrap();
+        storage.revoke_token(expired_jti, expired_at).await.unwrap();
 
         // Add valid token
         let valid_jti = "valid_token";

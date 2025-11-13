@@ -1,10 +1,10 @@
 // OAuth2 Client management admin API
 
-use super::{error_response, not_found, validation_error, AdminError};
+use super::{AdminError, error_response, not_found, validation_error};
 use crate::models::AppConfig;
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,15 +48,13 @@ pub async fn list_clients(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let clients = CLIENTS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock clients: {}", e),
-            )
-        })?;
+    let clients = CLIENTS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock clients: {}", e),
+        )
+    })?;
 
     let tenant_clients: Vec<ClientResponse> = clients
         .values()
@@ -98,15 +96,13 @@ pub async fn get_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let clients = CLIENTS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock clients: {}", e),
-            )
-        })?;
+    let clients = CLIENTS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock clients: {}", e),
+        )
+    })?;
 
     let client = clients
         .get(&client_id)
@@ -178,15 +174,13 @@ pub async fn create_client(
     };
 
     // Store client
-    let mut clients = CLIENTS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock clients: {}", e),
-            )
-        })?;
+    let mut clients = CLIENTS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock clients: {}", e),
+        )
+    })?;
 
     clients.insert(client_id.clone(), client.clone());
 
@@ -228,15 +222,13 @@ pub async fn update_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut clients = CLIENTS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock clients: {}", e),
-            )
-        })?;
+    let mut clients = CLIENTS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock clients: {}", e),
+        )
+    })?;
 
     let client = clients
         .get_mut(&client_id)
@@ -307,15 +299,13 @@ pub async fn delete_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut clients = CLIENTS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock clients: {}", e),
-            )
-        })?;
+    let mut clients = CLIENTS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock clients: {}", e),
+        )
+    })?;
 
     let client = clients
         .get(&client_id)
@@ -387,7 +377,9 @@ pub struct ClientCreatedResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig};
+    use crate::models::{
+        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+    };
 
     fn create_test_config() -> Arc<AppConfig> {
         let mut tenants = HashMap::new();
@@ -416,9 +408,7 @@ mod tests {
                     oidc: None,
                     saml: None,
                 },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig {
-                    users: vec![],
-                }),
+                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
                 api_keys: None,
                 active: true,
             },
@@ -457,11 +447,8 @@ mod tests {
 
         // Get client
         let client_id = response.client_id.clone();
-        let get_result = get_client(
-            State(config),
-            Path(("test-tenant".to_string(), client_id)),
-        )
-        .await;
+        let get_result =
+            get_client(State(config), Path(("test-tenant".to_string(), client_id))).await;
 
         assert!(get_result.is_ok());
         let client = get_result.unwrap().0;

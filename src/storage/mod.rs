@@ -54,8 +54,7 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_api_key(&self, key_id: &str) -> Result<(), StorageError>;
 
     // Session operations (for device flow and OAuth2 sessions)
-    async fn store_session(&self, session_id: &str, data: SessionData)
-        -> Result<(), StorageError>;
+    async fn store_session(&self, session_id: &str, data: SessionData) -> Result<(), StorageError>;
 
     async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>, StorageError>;
 
@@ -87,8 +86,11 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_device_code(&self, device_code: &str) -> Result<(), StorageError>;
 
     // Token Revocation operations
-    async fn revoke_token(&self, token_jti: &str, expires_at: DateTime<Utc>)
-        -> Result<(), StorageError>;
+    async fn revoke_token(
+        &self,
+        token_jti: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StorageError>;
 
     async fn is_token_revoked(&self, token_jti: &str) -> Result<bool, StorageError>;
 
@@ -196,9 +198,7 @@ impl std::error::Error for StorageError {}
 /// Factory function to create storage backend based on configuration
 pub fn create_storage_backend(config: &crate::models::StorageConfig) -> Box<dyn StorageBackend> {
     match config {
-        crate::models::StorageConfig::Memory => {
-            Box::new(memory::MemoryStorage::new())
-        }
+        crate::models::StorageConfig::Memory => Box::new(memory::MemoryStorage::new()),
         crate::models::StorageConfig::Postgres { connection_string } => {
             Box::new(postgres::PostgresStorage::new(connection_string))
         }

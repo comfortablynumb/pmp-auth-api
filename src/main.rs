@@ -140,20 +140,56 @@ async fn main() {
             .route("/api/v1/admin/tenants", get(admin::list_tenants))
             .route("/api/v1/admin/tenants", post(admin::create_tenant))
             .route("/api/v1/admin/tenants/:tenant_id", get(admin::get_tenant))
-            .route("/api/v1/admin/tenants/:tenant_id", axum::routing::put(admin::update_tenant))
-            .route("/api/v1/admin/tenants/:tenant_id", axum::routing::delete(admin::delete_tenant))
+            .route(
+                "/api/v1/admin/tenants/:tenant_id",
+                axum::routing::put(admin::update_tenant),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id",
+                axum::routing::delete(admin::delete_tenant),
+            )
             // Client management
-            .route("/api/v1/admin/tenants/:tenant_id/clients", get(admin::list_clients))
-            .route("/api/v1/admin/tenants/:tenant_id/clients", post(admin::create_client))
-            .route("/api/v1/admin/tenants/:tenant_id/clients/:client_id", get(admin::get_client))
-            .route("/api/v1/admin/tenants/:tenant_id/clients/:client_id", axum::routing::put(admin::update_client))
-            .route("/api/v1/admin/tenants/:tenant_id/clients/:client_id", axum::routing::delete(admin::delete_client))
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients",
+                get(admin::list_clients),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients",
+                post(admin::create_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                get(admin::get_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                axum::routing::put(admin::update_client),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/clients/:client_id",
+                axum::routing::delete(admin::delete_client),
+            )
             // User management
-            .route("/api/v1/admin/tenants/:tenant_id/users", get(admin::list_users))
-            .route("/api/v1/admin/tenants/:tenant_id/users", post(admin::create_user))
-            .route("/api/v1/admin/tenants/:tenant_id/users/:user_id", get(admin::get_user))
-            .route("/api/v1/admin/tenants/:tenant_id/users/:user_id", axum::routing::put(admin::update_user))
-            .route("/api/v1/admin/tenants/:tenant_id/users/:user_id", axum::routing::delete(admin::delete_user))
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users",
+                get(admin::list_users),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users",
+                post(admin::create_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                get(admin::get_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                axum::routing::put(admin::update_user),
+            )
+            .route(
+                "/api/v1/admin/tenants/:tenant_id/users/:user_id",
+                axum::routing::delete(admin::delete_user),
+            )
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",

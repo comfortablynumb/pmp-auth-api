@@ -1,11 +1,11 @@
 // User management admin API
 
-use super::{error_response, not_found, validation_error, AdminError};
+use super::{AdminError, error_response, not_found, validation_error};
 use crate::auth::password::hash_password;
 use crate::models::{AppConfig, UserRole};
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,8 +17,7 @@ use lazy_static::lazy_static;
 use std::sync::Mutex;
 
 lazy_static! {
-    pub static ref USERS: Arc<Mutex<HashMap<String, User>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    pub static ref USERS: Arc<Mutex<HashMap<String, User>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
 /// User metadata
@@ -51,15 +50,13 @@ pub async fn list_users(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let users = USERS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
-            )
-        })?;
+    let users = USERS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock users: {}", e),
+        )
+    })?;
 
     let tenant_users: Vec<UserResponse> = users
         .values()
@@ -103,15 +100,13 @@ pub async fn get_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let users = USERS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
-            )
-        })?;
+    let users = USERS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock users: {}", e),
+        )
+    })?;
 
     let user = users
         .get(&user_id)
@@ -168,15 +163,13 @@ pub async fn create_user(
 
     // Check if user with email already exists
     {
-        let users = USERS
-            .lock()
-            .map_err(|e| {
-                error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "lock_error",
-                    &format!("Failed to lock users: {}", e),
-                )
-            })?;
+        let users = USERS.lock().map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "lock_error",
+                &format!("Failed to lock users: {}", e),
+            )
+        })?;
 
         if users
             .values()
@@ -214,15 +207,13 @@ pub async fn create_user(
     };
 
     // Store user
-    let mut users = USERS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
-            )
-        })?;
+    let mut users = USERS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock users: {}", e),
+        )
+    })?;
 
     users.insert(user_id.clone(), user.clone());
 
@@ -265,15 +256,13 @@ pub async fn update_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut users = USERS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
-            )
-        })?;
+    let mut users = USERS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock users: {}", e),
+        )
+    })?;
 
     let user = users
         .get_mut(&user_id)
@@ -359,15 +348,13 @@ pub async fn delete_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut users = USERS
-        .lock()
-        .map_err(|e| {
-            error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
-            )
-        })?;
+    let mut users = USERS.lock().map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_error",
+            &format!("Failed to lock users: {}", e),
+        )
+    })?;
 
     let user = users
         .get(&user_id)
@@ -431,7 +418,9 @@ pub struct UserResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig};
+    use crate::models::{
+        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+    };
 
     fn create_test_config() -> Arc<AppConfig> {
         let mut tenants = HashMap::new();
@@ -460,9 +449,7 @@ mod tests {
                     oidc: None,
                     saml: None,
                 },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig {
-                    users: vec![],
-                }),
+                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
                 api_keys: None,
                 active: true,
             },
@@ -503,11 +490,7 @@ mod tests {
 
         // Get user
         let user_id = response.id.clone();
-        let get_result = get_user(
-            State(config),
-            Path(("test-tenant".to_string(), user_id)),
-        )
-        .await;
+        let get_result = get_user(State(config), Path(("test-tenant".to_string(), user_id))).await;
 
         assert!(get_result.is_ok());
         let user = get_result.unwrap().0;

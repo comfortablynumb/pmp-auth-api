@@ -1,10 +1,10 @@
 // Tenant management admin API
 
-use super::{error_response, not_found, validation_error, AdminError};
+use super::{AdminError, error_response, not_found, validation_error};
 use crate::models::AppConfig;
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -47,8 +47,13 @@ pub async fn get_tenant(
         name: tenant.name.clone(),
         description: tenant.description.clone(),
         active: tenant.active,
-        identity_provider: serde_json::to_value(&tenant.identity_provider)
-            .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, "serialization_error", &e.to_string()))?,
+        identity_provider: serde_json::to_value(&tenant.identity_provider).map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "serialization_error",
+                &e.to_string(),
+            )
+        })?,
         identity_backend: format!("{:?}", tenant.identity_backend),
         has_api_keys: tenant.api_keys.is_some(),
     };
@@ -178,7 +183,9 @@ pub struct TenantDetailResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig, Tenant};
+    use crate::models::{
+        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig, Tenant,
+    };
     use std::collections::HashMap;
 
     fn create_test_config() -> Arc<AppConfig> {
@@ -208,9 +215,7 @@ mod tests {
                     oidc: None,
                     saml: None,
                 },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig {
-                    users: vec![],
-                }),
+                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
                 api_keys: None,
                 active: true,
             },
