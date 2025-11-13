@@ -95,6 +95,19 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/api-keys/:key_id/revoke",
                 post(auth::revoke_api_key),
             )
+            // SAML 2.0 Identity Provider endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/saml/metadata",
+                get(auth::saml_metadata),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/saml/sso",
+                get(auth::saml_sso_redirect).post(auth::saml_sso_post),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/saml/slo",
+                post(auth::saml_slo),
+            )
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
