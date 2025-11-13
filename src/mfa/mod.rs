@@ -3,8 +3,8 @@
 
 #![allow(dead_code)]
 
-pub mod totp;
 pub mod backup_codes;
+pub mod totp;
 
-pub use totp::{TotpConfig, TotpManager, TotpSecret};
 pub use backup_codes::{BackupCode, BackupCodesManager};
+pub use totp::{TotpConfig, TotpManager, TotpSecret};

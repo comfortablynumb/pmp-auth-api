@@ -23,10 +23,10 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             max_concurrent_sessions: 5,
-            session_timeout_secs: 3600,         // 1 hour idle timeout
-            absolute_timeout_secs: 86400,       // 24 hours absolute timeout
+            session_timeout_secs: 3600,   // 1 hour idle timeout
+            absolute_timeout_secs: 86400, // 24 hours absolute timeout
             track_activity: true,
-            activity_update_interval_secs: 60,  // Update activity at most once per minute
+            activity_update_interval_secs: 60, // Update activity at most once per minute
         }
     }
 }

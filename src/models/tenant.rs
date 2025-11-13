@@ -230,16 +230,28 @@ pub struct LdapBackendConfig {
     /// LDAP server URL (ldap://... or ldaps://...)
     pub url: String,
     /// Bind DN for authentication
-    pub bind_dn: String,
+    pub bind_dn: Option<String>,
     /// Bind password
-    pub bind_password: String,
+    pub bind_password: Option<String>,
     /// Base DN for user searches
     pub base_dn: String,
     /// User filter (e.g., "(uid={username})")
-    pub user_filter: String,
+    pub user_filter: Option<String>,
     /// Attributes to fetch
     #[serde(default = "default_ldap_attributes")]
-    pub attributes: Vec<String>,
+    pub attributes: Option<Vec<String>>,
+    /// ID attribute name (default: uid)
+    pub id_attribute: Option<String>,
+    /// Email attribute name (default: mail)
+    pub email_attribute: Option<String>,
+    /// Name attribute name (default: cn)
+    pub name_attribute: Option<String>,
+    /// Group base DN (for group queries)
+    pub group_base_dn: Option<String>,
+    /// Admin group DN (users in this group become admins)
+    pub admin_group: Option<String>,
+    /// Use StartTLS (default: false)
+    pub use_starttls: Option<bool>,
 }
 
 fn default_ldap_attributes() -> Vec<String> {

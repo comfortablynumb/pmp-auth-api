@@ -9,6 +9,4 @@ pub mod types;
 
 pub use logger::{AuditLogger, AuditLoggerState};
 pub use storage::{AuditStorage, MemoryAuditStorage, PostgresAuditStorage};
-pub use types::{
-    AuditAction, AuditEntry, AuditLevel, AuditQuery, ComplianceReport, ResourceType,
-};
+pub use types::{AuditAction, AuditEntry, AuditLevel, AuditQuery, ComplianceReport, ResourceType};

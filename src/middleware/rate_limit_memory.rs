@@ -138,10 +138,7 @@ impl RateLimiter for MemoryRateLimiter {
         // Block if exceeded max attempts
         if entry.count >= self.max_failed_attempts {
             entry.blocked_until = Some(now + self.block_duration_secs);
-            debug!(
-                "Blocking {} after {} failed attempts",
-                key, entry.count
-            );
+            debug!("Blocking {} after {} failed attempts", key, entry.count);
         }
 
         Ok(())

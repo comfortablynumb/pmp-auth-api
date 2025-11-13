@@ -5,7 +5,7 @@
 
 use super::rate_limit::RateLimiter;
 use async_trait::async_trait;
-use redis::{aio::MultiplexedConnection, AsyncCommands, RedisError};
+use redis::{AsyncCommands, RedisError, aio::MultiplexedConnection};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error};
@@ -139,10 +139,7 @@ impl RateLimiter for RedisRateLimiter {
 
         // Block if exceeded threshold
         if attempts >= self.max_failed_attempts {
-            debug!(
-                "Blocking {} after {} failed attempts",
-                key, attempts
-            );
+            debug!("Blocking {} after {} failed attempts", key, attempts);
             let _: () = conn
                 .set_ex(&block_key, 1, self.block_duration_secs as u64)
                 .await
@@ -222,10 +219,7 @@ mod tests {
 
         // Record 3 failed attempts
         for _ in 0..3 {
-            limiter
-                .record_failed_attempt("test-key-2")
-                .await
-                .unwrap();
+            limiter.record_failed_attempt("test-key-2").await.unwrap();
         }
 
         // Should be blocked

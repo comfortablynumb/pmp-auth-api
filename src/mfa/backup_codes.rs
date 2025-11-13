@@ -1,7 +1,7 @@
 // Backup codes for MFA recovery
 // Provides one-time use codes for account recovery when MFA device is unavailable
 
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -103,11 +103,7 @@ impl BackupCodesManager {
     /// Verify and consume a backup code
     /// Returns Ok(true) if the code is valid and has been consumed
     /// Returns Ok(false) if the code is invalid or already used
-    pub async fn verify_and_consume(
-        &self,
-        user_id: &str,
-        code: &str,
-    ) -> Result<bool, String> {
+    pub async fn verify_and_consume(&self, user_id: &str, code: &str) -> Result<bool, String> {
         let mut storage = self.storage.write().await;
 
         let user_codes = match storage.get_mut(user_id) {

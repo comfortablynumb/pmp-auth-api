@@ -1,7 +1,9 @@
 // Session manager for high-level session operations
 
 use super::storage::SessionStorage;
-use super::types::{Session, SessionActivity, SessionConfig, SessionInfo, SessionQuery, SessionStatus};
+use super::types::{
+    Session, SessionActivity, SessionConfig, SessionInfo, SessionQuery, SessionStatus,
+};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -129,7 +131,11 @@ impl SessionManager {
     }
 
     /// Get all active sessions for a user
-    pub async fn get_user_sessions(&self, user_id: &str, include_inactive: bool) -> Result<Vec<SessionInfo>, String> {
+    pub async fn get_user_sessions(
+        &self,
+        user_id: &str,
+        include_inactive: bool,
+    ) -> Result<Vec<SessionInfo>, String> {
         let sessions = self.storage.get_user_sessions(user_id).await?;
 
         let session_infos: Vec<SessionInfo> = sessions
@@ -255,7 +261,10 @@ impl SessionManager {
 
         for session in active_sessions {
             // Count by tenant
-            *stats.by_tenant.entry(session.tenant_id.clone()).or_insert(0) += 1;
+            *stats
+                .by_tenant
+                .entry(session.tenant_id.clone())
+                .or_insert(0) += 1;
 
             // Count by device type
             if let Some(device) = &session.device_info {
@@ -329,7 +338,13 @@ mod tests {
         // Create 2 sessions (at the limit)
         for i in 0..2 {
             manager
-                .create_session("user-123", "tenant-456", &format!("192.168.1.{}", i), None, None)
+                .create_session(
+                    "user-123",
+                    "tenant-456",
+                    &format!("192.168.1.{}", i),
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
         }
@@ -359,7 +374,10 @@ mod tests {
         assert!(manager.validate_session(&session.session_id).await.unwrap());
 
         // Terminate the session
-        manager.terminate_session(&session.session_id).await.unwrap();
+        manager
+            .terminate_session(&session.session_id)
+            .await
+            .unwrap();
 
         // Session should no longer be valid
         assert!(!manager.validate_session(&session.session_id).await.unwrap());
@@ -374,12 +392,21 @@ mod tests {
         // Create multiple sessions
         for i in 0..5 {
             manager
-                .create_session("user-123", "tenant-456", &format!("192.168.1.{}", i), None, None)
+                .create_session(
+                    "user-123",
+                    "tenant-456",
+                    &format!("192.168.1.{}", i),
+                    None,
+                    None,
+                )
                 .await
                 .unwrap();
         }
 
-        let count = manager.terminate_all_user_sessions("user-123").await.unwrap();
+        let count = manager
+            .terminate_all_user_sessions("user-123")
+            .await
+            .unwrap();
         assert_eq!(count, 5);
 
         let active_sessions = manager.get_user_sessions("user-123", false).await.unwrap();

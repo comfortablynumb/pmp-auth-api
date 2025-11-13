@@ -4,7 +4,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use totp_lite::{totp_custom, Sha1};
+use totp_lite::{Sha1, totp_custom};
 use tracing::debug;
 
 /// TOTP configuration
@@ -120,7 +120,8 @@ impl TotpManager {
 
     /// Generate a TOTP code for a given secret and time step
     fn generate_totp(&self, secret: &[u8], time_step: u64) -> u32 {
-        let code_str = totp_custom::<Sha1>(self.config.time_step, self.config.digits, secret, time_step);
+        let code_str =
+            totp_custom::<Sha1>(self.config.time_step, self.config.digits, secret, time_step);
         code_str.parse::<u32>().unwrap_or(0)
     }
 
