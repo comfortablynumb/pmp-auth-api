@@ -82,6 +82,19 @@ async fn main() {
                 "/api/v1/tenant/:tenant_id/oauth/userinfo",
                 get(auth::oidc_userinfo),
             )
+            // API Key Management endpoints
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/create",
+                post(auth::create_api_key),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/list",
+                get(auth::list_api_keys),
+            )
+            .route(
+                "/api/v1/tenant/:tenant_id/api-keys/:key_id/revoke",
+                post(auth::revoke_api_key),
+            )
             // Legacy endpoints (will return NOT_IMPLEMENTED)
             .route(
                 "/api/v1/tenant/:tenant_id/auth/:strategy_name/register",
