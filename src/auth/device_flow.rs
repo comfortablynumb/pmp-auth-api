@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 // In-memory storage for device codes (TODO: Move to storage backend)
@@ -24,6 +24,7 @@ lazy_static! {
 
 /// Device code data
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DeviceCodeData {
     device_code: String,
     user_code: String,
@@ -38,6 +39,7 @@ struct DeviceCodeData {
 
 /// Device code status
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum DeviceCodeStatus {
     Pending,
     Authorized,
@@ -170,7 +172,7 @@ pub async fn device_authorize(
         .oauth2
         .as_ref()
         .map(|o| extract_base_url(&o.issuer))
-        .unwrap_or_else(|| format!("http://localhost:3000"));
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
 
     let verification_uri = format!("{}/device", base_url);
     let verification_uri_complete = Some(format!("{}?user_code={}", verification_uri, user_code));
@@ -334,7 +336,7 @@ pub async fn device_token(
         &scope_vec,
         &tenant_id,
         oauth2_config,
-    ).map_err(|(status, json)| (status, json))?;
+    )?;
 
     let refresh_token = Uuid::new_v4().to_string();
 

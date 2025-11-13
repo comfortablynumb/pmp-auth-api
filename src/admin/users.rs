@@ -1,7 +1,7 @@
 // User management admin API
 
 use super::{error_response, not_found, validation_error, AdminError};
-use crate::auth::password::{hash_password, verify_password};
+use crate::auth::password::hash_password;
 use crate::models::{AppConfig, UserRole};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -70,7 +70,7 @@ pub async fn list_users(
             email: u.email.clone(),
             name: u.name.clone(),
             picture: u.picture.clone(),
-            role: u.role.clone(),
+            role: u.role,
             active: u.active,
             email_verified: u.email_verified,
             created_at: u.created_at,
@@ -133,7 +133,7 @@ pub async fn get_user(
         email: user.email.clone(),
         name: user.name.clone(),
         picture: user.picture.clone(),
-        role: user.role.clone(),
+        role: user.role,
         active: user.active,
         email_verified: user.email_verified,
         created_at: user.created_at,
@@ -334,7 +334,7 @@ pub async fn update_user(
         email: user.email.clone(),
         name: user.name.clone(),
         picture: user.picture.clone(),
-        role: user.role.clone(),
+        role: user.role,
         active: user.active,
         email_verified: user.email_verified,
         created_at: user.created_at,

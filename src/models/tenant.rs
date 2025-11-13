@@ -337,22 +337,17 @@ fn default_enabled() -> bool {
 }
 
 /// Storage backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum StorageConfig {
     /// In-memory storage (default, no persistence)
+    #[default]
     Memory,
     /// PostgreSQL database storage
     Postgres {
         /// PostgreSQL connection string
         connection_string: String,
     },
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        StorageConfig::Memory
-    }
 }
 
 /// Root configuration structure

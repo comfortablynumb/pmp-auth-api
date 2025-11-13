@@ -42,6 +42,7 @@ pub fn validation_error(message: &str) -> AdminError {
 }
 
 /// Create a conflict error response
+#[allow(dead_code)]
 pub fn conflict_error(message: &str) -> AdminError {
     error_response(StatusCode::CONFLICT, "conflict", message)
 }

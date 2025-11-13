@@ -1,7 +1,7 @@
 // Tenant management admin API
 
-use super::{conflict_error, error_response, not_found, validation_error, AdminError};
-use crate::models::{AppConfig, Tenant};
+use super::{error_response, not_found, validation_error, AdminError};
+use crate::models::AppConfig;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -143,7 +143,9 @@ pub struct CreateTenantRequest {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    #[allow(dead_code)]
     pub identity_provider: serde_json::Value,
+    #[allow(dead_code)]
     pub identity_backend: serde_json::Value,
 }
 
@@ -176,7 +178,7 @@ pub struct TenantDetailResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig};
+    use crate::models::{IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig, Tenant};
     use std::collections::HashMap;
 
     fn create_test_config() -> Arc<AppConfig> {

@@ -1,6 +1,8 @@
 // Storage backend abstraction
 // Provides pluggable storage for authorization codes, tokens, API keys, etc.
 
+#![allow(dead_code)]
+
 pub mod memory;
 pub mod postgres;
 
