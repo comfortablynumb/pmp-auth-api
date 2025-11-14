@@ -397,23 +397,23 @@ impl AppConfig {
             }
 
             // Validate OAuth2 server config if present
-            if let Some(oauth2) = &tenant.identity_provider.oauth2
-                && oauth2.issuer.is_empty()
-            {
-                return Err(format!(
-                    "OAuth2 issuer for tenant '{}' cannot be empty",
-                    tenant_id
-                ));
+            if let Some(oauth2) = &tenant.identity_provider.oauth2 {
+                if oauth2.issuer.is_empty() {
+                    return Err(format!(
+                        "OAuth2 issuer for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
             }
 
             // Validate OIDC config if present
-            if let Some(oidc) = &tenant.identity_provider.oidc
-                && oidc.issuer.is_empty()
-            {
-                return Err(format!(
-                    "OIDC issuer for tenant '{}' cannot be empty",
-                    tenant_id
-                ));
+            if let Some(oidc) = &tenant.identity_provider.oidc {
+                if oidc.issuer.is_empty() {
+                    return Err(format!(
+                        "OIDC issuer for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
             }
 
             // Validate SAML config if present

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use opentelemetry::{global, KeyValue};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::Resource;

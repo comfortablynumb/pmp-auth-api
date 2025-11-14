@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::auth::identity_backend::BackendError;
 use ldap3::{Scope, SearchEntry};
 use serde::{Deserialize, Serialize};

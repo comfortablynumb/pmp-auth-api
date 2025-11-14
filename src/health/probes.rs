@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::checks::{HealthCheck, HealthCheckResult, HealthStatus};
 use axum::{
     http::StatusCode,

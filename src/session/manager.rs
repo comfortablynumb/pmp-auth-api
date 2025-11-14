@@ -330,8 +330,10 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_session_limit() {
         let storage = Arc::new(MemorySessionStorage::new());
-        let mut config = SessionConfig::default();
-        config.max_concurrent_sessions = 2;
+        let config = SessionConfig {
+            max_concurrent_sessions: 2,
+            ..Default::default()
+        };
 
         let manager = SessionManager::new(storage, config);
 

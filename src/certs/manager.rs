@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use rcgen::{CertificateParams, DistinguishedName, KeyPair};
@@ -152,11 +154,11 @@ impl CertificateManager {
         kid: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut keys = self.keys.write().await;
-        if let Some(tenant_keys) = keys.get_mut(tenant_id)
-            && let Some(key) = tenant_keys.get_mut(kid)
-        {
-            key.metadata.active = false;
-            return Ok(());
+        if let Some(tenant_keys) = keys.get_mut(tenant_id) {
+            if let Some(key) = tenant_keys.get_mut(kid) {
+                key.metadata.active = false;
+                return Ok(());
+            }
         }
         Err("Key not found".into())
     }

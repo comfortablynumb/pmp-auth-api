@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use axum::{
     body::Body,
     http::StatusCode,
@@ -15,6 +17,7 @@ lazy_static! {
     pub static ref METRICS_REGISTRY: Arc<MetricsRegistry> = Arc::new(MetricsRegistry::new());
 }
 
+#[allow(dead_code)]
 pub struct MetricsRegistry {
     pub registry: Registry,
 

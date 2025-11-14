@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter, UpDownCounter},
@@ -5,6 +7,7 @@ use opentelemetry::{
 use std::time::{Duration, Instant};
 
 /// Token-related metrics collector
+#[allow(dead_code)]
 pub struct TokenMetrics {
     _meter: Meter,
     tokens_issued: Counter<u64>,
@@ -79,6 +82,7 @@ impl TokenMetrics {
         );
     }
 
+    #[allow(dead_code)]
     pub fn record_generation_duration(&self, tenant_id: &str, duration: Duration) {
         self.token_generation_duration.record(
             duration.as_secs_f64(),
@@ -86,6 +90,7 @@ impl TokenMetrics {
         );
     }
 
+    #[allow(dead_code)]
     pub fn start_timer(&self) -> MetricsTimer {
         MetricsTimer::new()
     }
@@ -319,6 +324,7 @@ impl MetricsTimer {
         self.start.elapsed()
     }
 
+    #[allow(dead_code)]
     pub fn stop(self) -> Duration {
         self.elapsed()
     }
