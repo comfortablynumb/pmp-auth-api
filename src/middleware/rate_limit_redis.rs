@@ -5,7 +5,7 @@
 
 use super::rate_limit::RateLimiter;
 use async_trait::async_trait;
-use redis::{AsyncCommands, RedisError, aio::MultiplexedConnection};
+use redis::{aio::MultiplexedConnection, AsyncCommands, RedisError};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error};

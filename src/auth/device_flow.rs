@@ -2,9 +2,9 @@
 // For devices with limited input capabilities (smart TVs, IoT devices, etc.)
 
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;

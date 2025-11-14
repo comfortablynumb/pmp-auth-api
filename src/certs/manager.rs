@@ -179,8 +179,7 @@ impl CertificateManager {
 
         for tenant_keys in keys.values_mut() {
             let before_count = tenant_keys.len();
-            tenant_keys
-                .retain(|_, key| key.metadata.expires_at.is_none_or(|exp| exp > Utc::now()));
+            tenant_keys.retain(|_, key| key.metadata.expires_at.is_none_or(|exp| exp > Utc::now()));
             removed_count += before_count - tenant_keys.len();
         }
 

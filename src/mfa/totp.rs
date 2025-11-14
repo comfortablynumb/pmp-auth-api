@@ -4,7 +4,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use totp_lite::{Sha1, totp_custom};
+use totp_lite::{totp_custom, Sha1};
 use tracing::debug;
 
 /// TOTP configuration

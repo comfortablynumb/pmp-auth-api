@@ -13,7 +13,7 @@ pub mod token_introspection;
 pub use api_keys::{create_api_key, list_api_keys, revoke_api_key};
 pub use device_flow::{device_authorize, device_confirm, device_token, device_verify};
 #[allow(unused_imports)]
-pub use identity_backend::{BackendUser, IdentityBackendTrait, create_identity_backend};
+pub use identity_backend::{create_identity_backend, BackendUser, IdentityBackendTrait};
 pub use jwt::create_token;
 pub use oauth2_server::{jwks, oauth2_authorize, oauth2_token};
 pub use oidc::{oidc_discovery, oidc_userinfo};

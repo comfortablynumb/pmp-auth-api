@@ -1,4 +1,4 @@
-use bcrypt::{BcryptError, DEFAULT_COST, hash, verify};
+use bcrypt::{hash, verify, BcryptError, DEFAULT_COST};
 
 pub fn hash_password(password: &str) -> Result<String, BcryptError> {
     hash(password, DEFAULT_COST)

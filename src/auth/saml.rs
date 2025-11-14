@@ -4,10 +4,10 @@
 #![allow(dead_code)]
 
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -383,7 +383,7 @@ fn generate_saml_response(
 
 /// Decode SAML request from HTTP-Redirect binding
 fn decode_saml_redirect(encoded: &str) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use flate2::read::DeflateDecoder;
     use std::io::Read;
 
@@ -412,7 +412,7 @@ fn decode_saml_redirect(encoded: &str) -> Result<String, (StatusCode, Json<serde
 
 /// Create HTML form for HTTP-POST binding
 fn create_saml_post_form(acs_url: &str, saml_response: &str) -> String {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let encoded = STANDARD.encode(saml_response.as_bytes());
 
     format!(

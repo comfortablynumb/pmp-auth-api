@@ -1,7 +1,7 @@
 // Backup codes for MFA recovery
 // Provides one-time use codes for account recovery when MFA device is unavailable
 
-use bcrypt::{DEFAULT_COST, hash, verify};
+use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};

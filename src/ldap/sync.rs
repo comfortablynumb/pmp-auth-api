@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration as TokioDuration, interval};
+use tokio::time::{interval, Duration as TokioDuration};
 use tracing::{error, info, warn};
 
 use super::groups::{GroupInfo, NestedGroupResolver};

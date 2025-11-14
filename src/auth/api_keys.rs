@@ -2,11 +2,11 @@
 // This module handles long-lived JWT tokens for machine-to-machine authentication
 
 use crate::models::{ApiKeyConfig, AppConfig};
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use chrono::Utc;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;

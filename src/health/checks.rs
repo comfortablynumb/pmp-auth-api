@@ -177,26 +177,21 @@ impl HealthCheck for RedisHealthCheck {
         let client = self.redis_client.as_ref().unwrap();
 
         match client.get_multiplexed_async_connection().await {
-            Ok(mut conn) => {
-                match redis::cmd("PING")
-                    .query_async::<_, String>(&mut conn)
-                    .await
-                {
-                    Ok(_) => {
-                        let duration_ms = start.elapsed().as_millis() as u64;
-                        HealthCheckResult::healthy("redis".to_string(), duration_ms)
-                    }
-                    Err(e) => {
-                        let duration_ms = start.elapsed().as_millis() as u64;
-                        error!("Redis ping failed: {}", e);
-                        HealthCheckResult::unhealthy(
-                            "redis".to_string(),
-                            format!("Ping failed: {}", e),
-                            duration_ms,
-                        )
-                    }
+            Ok(mut conn) => match redis::cmd("PING").query_async::<_, String>(&mut conn).await {
+                Ok(_) => {
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    HealthCheckResult::healthy("redis".to_string(), duration_ms)
                 }
-            }
+                Err(e) => {
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    error!("Redis ping failed: {}", e);
+                    HealthCheckResult::unhealthy(
+                        "redis".to_string(),
+                        format!("Ping failed: {}", e),
+                        duration_ms,
+                    )
+                }
+            },
             Err(e) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 error!("Redis connection failed: {}", e);

@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use axum::{
-    Json,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
+    Json,
 };
 use serde_json::json;
 use std::sync::Arc;

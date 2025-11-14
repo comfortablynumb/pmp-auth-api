@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use opentelemetry::{
-    KeyValue,
     metrics::{Counter, Histogram, Meter, UpDownCounter},
+    KeyValue,
 };
 use std::time::{Duration, Instant};
 

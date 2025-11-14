@@ -2,12 +2,12 @@
 // This module implements the OAuth2 authorization server functionality
 
 use crate::models::{AppConfig, Claims, OAuth2ServerConfig, UserRole};
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
+use axum::Json;
 use chrono::Utc;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -597,7 +597,7 @@ fn validate_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> boo
         }
         "S256" => {
             // S256 method: BASE64URL(SHA256(verifier)) must equal challenge
-            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
             use sha2::{Digest, Sha256};
 
             let mut hasher = Sha256::new();

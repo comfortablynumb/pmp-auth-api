@@ -362,8 +362,7 @@ impl NestedGroupResolver {
                     children: Vec::new(),
                 };
 
-                Box::pin(self.build_hierarchy(&mut child_node, visited, depth + 1))
-                    .await?;
+                Box::pin(self.build_hierarchy(&mut child_node, visited, depth + 1)).await?;
 
                 node.children.push(child_node);
             }

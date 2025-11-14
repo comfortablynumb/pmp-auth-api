@@ -206,7 +206,11 @@ impl HsmProvider for SoftwareHsmProvider {
         Ok(keys.keys().cloned().collect())
     }
 
-    async fn sign(&self, _key_id: &str, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn sign(
+        &self,
+        _key_id: &str,
+        data: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // In a real HSM, this would use the HSM's signing capabilities
         // For software implementation, we'd use the encoding key
         // This is a simplified placeholder
@@ -284,7 +288,11 @@ impl HsmProvider for Pkcs11HsmProvider {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
-    async fn sign(&self, _key_id: &str, _data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn sign(
+        &self,
+        _key_id: &str,
+        _data: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 

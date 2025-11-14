@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::time::{Duration as TokioDuration, sleep};
+use tokio::time::{sleep, Duration as TokioDuration};
 use tracing::{error, info};
 
 use super::manager::CertificateManager;

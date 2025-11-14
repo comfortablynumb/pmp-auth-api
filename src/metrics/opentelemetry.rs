@@ -48,12 +48,9 @@ pub fn init_telemetry(
 }
 
 /// Initialize OpenTelemetry metrics with Prometheus exporter
-fn init_metrics(
-    resource: Resource,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn init_metrics(resource: Resource) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Using Prometheus exporter for metrics");
-    let exporter = opentelemetry_prometheus::exporter()
-        .build()?;
+    let exporter = opentelemetry_prometheus::exporter().build()?;
 
     let provider = SdkMeterProvider::builder()
         .with_resource(resource)

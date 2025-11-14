@@ -2,9 +2,9 @@
 // Allows resource servers to validate tokens and revoke access
 
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -285,7 +285,7 @@ fn decode_with_key(token: &str, _public_key_pem: &str) -> Result<TokenClaims, St
     }
 
     // Decode payload (second part)
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let payload_bytes = STANDARD
         .decode(parts[1])
         .map_err(|e| format!("Base64 decode error: {}", e))?;
@@ -353,7 +353,7 @@ pub async fn token_revoke(
     let parts: Vec<&str> = request.token.split('.').collect();
     if parts.len() == 3 {
         // Decode payload
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
         if let Ok(payload_bytes) = STANDARD.decode(parts[1]) {
             if let Ok(claims) = serde_json::from_slice::<TokenClaims>(&payload_bytes) {
                 // Check if this is an API key

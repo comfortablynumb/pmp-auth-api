@@ -2,11 +2,11 @@
 // Will be replaced with OAuth2/OIDC/SAML token validation
 
 use crate::models::{AppConfig, Claims};
-use axum::Json;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde_json::json;
 use std::sync::Arc;
 use tracing::warn;
