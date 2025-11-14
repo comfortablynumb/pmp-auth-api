@@ -1,0 +1,184 @@
+# Docker development configuration for PMP Auth API
+# This configuration enables all features for local testing
+
+tenants:
+  # Test tenant with LDAP backend
+  demo-ldap:
+    id: demo-ldap
+    name: "Demo LDAP Tenant"
+    description: "Demo tenant using LDAP authentication"
+    active: true
+
+    identity_provider:
+      oauth2:
+        issuer: "http://localhost:3000"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+          - "refresh_token"
+          - "password"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "demo-ldap-2024"
+          private_key: "/app/keys/demo-private.pem"
+          public_key: "/app/keys/demo-public.pem"
+
+      oidc:
+        issuer: "http://localhost:3000"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "name"
+          - "preferred_username"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600
+
+    # LDAP backend for user authentication
+    ldap_backend:
+      url: "ldap://openldap:389"
+      bind_dn: "cn=admin,dc=example,dc=com"
+      bind_password: "admin_password"
+      base_dn: "dc=example,dc=com"
+      user_filter: "(uid={username})"
+      user_search_base: "ou=users,dc=example,dc=com"
+      group_search_base: "ou=groups,dc=example,dc=com"
+      username_attribute: "uid"
+      email_attribute: "mail"
+      display_name_attribute: "cn"
+      admin_group: "cn=admins,ou=groups,dc=example,dc=com"
+      connection_timeout_secs: 5
+      pool_size: 10
+      tls_enabled: false
+
+    # API Keys configuration
+    api_keys:
+      enabled: true
+      default_expiration_days: 90
+      max_keys_per_user: 10
+      signing_key:
+        algorithm: "RS256"
+        kid: "demo-api-key-2024"
+        private_key: "/app/keys/demo-private.pem"
+        public_key: "/app/keys/demo-public.pem"
+
+    # MFA configuration
+    mfa:
+      enabled: true
+      totp:
+        enabled: true
+        issuer: "PMP Auth Demo"
+        digits: 6
+        period: 30
+      backup_codes:
+        enabled: true
+        count: 10
+
+  # Test tenant with mock backend
+  demo-mock:
+    id: demo-mock
+    name: "Demo Mock Tenant"
+    description: "Demo tenant using mock authentication for testing"
+    active: true
+
+    identity_provider:
+      oauth2:
+        issuer: "http://localhost:3000"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+          - "refresh_token"
+          - "password"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "demo-mock-2024"
+          private_key: "/app/keys/demo-private.pem"
+          public_key: "/app/keys/demo-public.pem"
+
+      oidc:
+        issuer: "http://localhost:3000"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "name"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600
+
+    # Mock backend for testing
+    mock_backend:
+      users:
+        - id: "user1"
+          username: "testuser"
+          email: "test@example.com"
+          password_hash: "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYFJ3hX4VTK"  # password: "password123"
+          display_name: "Test User"
+          role: "user"
+        - id: "admin1"
+          username: "admin"
+          email: "admin@example.com"
+          password_hash: "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYFJ3hX4VTK"  # password: "password123"
+          display_name: "Admin User"
+          role: "admin"
+
+# Global settings
+server:
+  host: "0.0.0.0"
+  port: 3000
+  workers: 4
+
+# Database (PostgreSQL)
+database:
+  url: "postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth"
+  max_connections: 10
+  min_connections: 2
+
+# Redis
+redis:
+  url: "redis://redis:6379"
+  pool_size: 10
+
+# Rate limiting
+rate_limiting:
+  enabled: true
+  backend: "redis"
+  requests_per_minute: 60
+  burst: 10
+  failed_auth_attempts: 5
+  lockout_duration_secs: 300
+
+# Logging
+logging:
+  level: "debug"
+  format: "json"
+
+# Metrics
+metrics:
+  enabled: true
+  prometheus_port: 9090
+  path: "/metrics"
+
+# Security
+security:
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "http://localhost:3001"
+  cookie_secure: false  # Set to true in production with HTTPS
+  session_timeout_minutes: 30

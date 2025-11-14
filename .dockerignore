@@ -1,0 +1,24 @@
+# Docker ignore file
+target/
+.git/
+.gitignore
+*.md
+.env
+.env.*
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test data
+data/
+*.log
