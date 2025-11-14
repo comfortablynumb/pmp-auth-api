@@ -6,6 +6,18 @@ use axum::extract::Request;
 use std::sync::Arc;
 use tracing::{error, info};
 
+/// Parameters for logging admin actions
+pub struct AdminActionParams<'a> {
+    pub action: AuditAction,
+    pub resource_type: ResourceType,
+    pub resource_id: &'a str,
+    pub tenant_id: &'a str,
+    pub admin_user_id: &'a str,
+    pub ip_address: &'a str,
+    pub success: bool,
+    pub error: Option<&'a str>,
+}
+
 /// Audit logger for recording security and compliance events
 #[derive(Clone)]
 pub struct AuditLogger {
@@ -105,28 +117,18 @@ impl AuditLogger {
     }
 
     /// Log admin action (tenant/client/user management)
-    pub async fn log_admin_action(
-        &self,
-        action: AuditAction,
-        resource_type: ResourceType,
-        resource_id: &str,
-        tenant_id: &str,
-        admin_user_id: &str,
-        ip_address: &str,
-        success: bool,
-        error: Option<&str>,
-    ) {
+    pub async fn log_admin_action(&self, params: AdminActionParams<'_>) {
         let mut builder = AuditEntry::builder()
-            .tenant_id(tenant_id)
-            .user_id(admin_user_id)
-            .ip_address(ip_address)
-            .action(action)
-            .resource_type(resource_type)
-            .resource_id(resource_id)
+            .tenant_id(params.tenant_id)
+            .user_id(params.admin_user_id)
+            .ip_address(params.ip_address)
+            .action(params.action)
+            .resource_type(params.resource_type)
+            .resource_id(params.resource_id)
             .level(AuditLevel::Info)
-            .success(success);
+            .success(params.success);
 
-        if let Some(err) = error {
+        if let Some(err) = params.error {
             builder = builder.error(err);
         }
 

@@ -90,7 +90,7 @@ impl CertificateManager {
         tenant_keys
             .values()
             .filter(|k| k.metadata.active)
-            .filter(|k| k.metadata.expires_at.map_or(true, |exp| exp > Utc::now()))
+            .filter(|k| k.metadata.expires_at.is_none_or(|exp| exp > Utc::now()))
             .max_by_key(|k| k.metadata.created_at)
             .cloned()
     }
@@ -106,7 +106,7 @@ impl CertificateManager {
         tenant_keys
             .values()
             .filter(|k| k.metadata.active)
-            .filter(|k| k.metadata.expires_at.map_or(true, |exp| exp > Utc::now()))
+            .filter(|k| k.metadata.expires_at.is_none_or(|exp| exp > Utc::now()))
             .cloned()
             .collect()
     }
@@ -152,11 +152,11 @@ impl CertificateManager {
         kid: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut keys = self.keys.write().await;
-        if let Some(tenant_keys) = keys.get_mut(tenant_id) {
-            if let Some(key) = tenant_keys.get_mut(kid) {
-                key.metadata.active = false;
-                return Ok(());
-            }
+        if let Some(tenant_keys) = keys.get_mut(tenant_id)
+            && let Some(key) = tenant_keys.get_mut(kid)
+        {
+            key.metadata.active = false;
+            return Ok(());
         }
         Err("Key not found".into())
     }
@@ -178,7 +178,7 @@ impl CertificateManager {
         for tenant_keys in keys.values_mut() {
             let before_count = tenant_keys.len();
             tenant_keys
-                .retain(|_, key| key.metadata.expires_at.map_or(true, |exp| exp > Utc::now()));
+                .retain(|_, key| key.metadata.expires_at.is_none_or(|exp| exp > Utc::now()));
             removed_count += before_count - tenant_keys.len();
         }
 

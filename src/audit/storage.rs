@@ -69,71 +69,71 @@ impl AuditStorage for MemoryAuditStorage {
             .iter()
             .filter(|entry| {
                 // Filter by tenant_id
-                if let Some(ref tenant_id) = query.tenant_id {
-                    if entry.tenant_id.as_ref() != Some(tenant_id) {
-                        return false;
-                    }
+                if let Some(ref tenant_id) = query.tenant_id
+                    && entry.tenant_id.as_ref() != Some(tenant_id)
+                {
+                    return false;
                 }
 
                 // Filter by user_id
-                if let Some(ref user_id) = query.user_id {
-                    if entry.user_id.as_ref() != Some(user_id) {
-                        return false;
-                    }
+                if let Some(ref user_id) = query.user_id
+                    && entry.user_id.as_ref() != Some(user_id)
+                {
+                    return false;
                 }
 
                 // Filter by client_id
-                if let Some(ref client_id) = query.client_id {
-                    if entry.client_id.as_ref() != Some(client_id) {
-                        return false;
-                    }
+                if let Some(ref client_id) = query.client_id
+                    && entry.client_id.as_ref() != Some(client_id)
+                {
+                    return false;
                 }
 
                 // Filter by action
-                if let Some(ref action) = query.action {
-                    if &entry.action != action {
-                        return false;
-                    }
+                if let Some(ref action) = query.action
+                    && &entry.action != action
+                {
+                    return false;
                 }
 
                 // Filter by resource_type
-                if let Some(ref resource_type) = query.resource_type {
-                    if &entry.resource_type != resource_type {
-                        return false;
-                    }
+                if let Some(ref resource_type) = query.resource_type
+                    && &entry.resource_type != resource_type
+                {
+                    return false;
                 }
 
                 // Filter by success
-                if let Some(success) = query.success {
-                    if entry.success != success {
-                        return false;
-                    }
+                if let Some(success) = query.success
+                    && entry.success != success
+                {
+                    return false;
                 }
 
                 // Filter by minimum level
-                if let Some(ref min_level) = query.min_level {
-                    if entry.level < *min_level {
-                        return false;
-                    }
+                if let Some(ref min_level) = query.min_level
+                    && entry.level < *min_level
+                {
+                    return false;
                 }
 
                 // Filter by time range
-                if let Some(start_time) = query.start_time {
-                    if entry.timestamp < start_time {
-                        return false;
-                    }
+                if let Some(start_time) = query.start_time
+                    && entry.timestamp < start_time
+                {
+                    return false;
                 }
-                if let Some(end_time) = query.end_time {
-                    if entry.timestamp > end_time {
-                        return false;
-                    }
+                if let Some(end_time) = query.end_time
+                    && entry.timestamp > end_time
+                {
+                    return false;
                 }
 
                 // Filter by IP address
-                if let Some(ref ip_address) = query.ip_address {
-                    if &entry.ip_address != ip_address {
-                        return false;
-                    }
+                if let Some(ref ip_address) = query.ip_address
+                    && &entry.ip_address != ip_address
+                {
+                    return false;
                 }
 
                 true
@@ -165,10 +165,10 @@ impl AuditStorage for MemoryAuditStorage {
         let filtered: Vec<&AuditEntry> = entries
             .iter()
             .filter(|e| {
-                if let Some(ref tid) = tenant_id {
-                    if e.tenant_id.as_ref() != Some(tid) {
-                        return false;
-                    }
+                if let Some(ref tid) = tenant_id
+                    && e.tenant_id.as_ref() != Some(tid)
+                {
+                    return false;
                 }
                 e.timestamp >= start && e.timestamp <= end
             })

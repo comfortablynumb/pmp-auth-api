@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 /// Token-related metrics collector
 pub struct TokenMetrics {
-    meter: Meter,
+    _meter: Meter,
     tokens_issued: Counter<u64>,
     tokens_revoked: Counter<u64>,
     token_generation_duration: Histogram<f64>,
@@ -37,7 +37,7 @@ impl TokenMetrics {
             .init();
 
         Self {
-            meter,
+            _meter: meter,
             tokens_issued,
             tokens_revoked,
             token_generation_duration,
@@ -93,7 +93,7 @@ impl TokenMetrics {
 
 /// Authentication metrics collector
 pub struct AuthMetrics {
-    meter: Meter,
+    _meter: Meter,
     auth_attempts: Counter<u64>,
     auth_successes: Counter<u64>,
     auth_failures: Counter<u64>,
@@ -124,7 +124,7 @@ impl AuthMetrics {
             .init();
 
         Self {
-            meter,
+            _meter: meter,
             auth_attempts,
             auth_successes,
             auth_failures,
@@ -174,7 +174,7 @@ impl AuthMetrics {
 
 /// Error metrics collector
 pub struct ErrorMetrics {
-    meter: Meter,
+    _meter: Meter,
     errors_total: Counter<u64>,
     rate_limit_hits: Counter<u64>,
 }
@@ -192,7 +192,7 @@ impl ErrorMetrics {
             .init();
 
         Self {
-            meter,
+            _meter: meter,
             errors_total,
             rate_limit_hits,
         }
@@ -222,7 +222,7 @@ impl ErrorMetrics {
 
 /// Latency metrics collector
 pub struct LatencyMetrics {
-    meter: Meter,
+    _meter: Meter,
     http_request_duration: Histogram<f64>,
     db_query_duration: Histogram<f64>,
     ldap_query_duration: Histogram<f64>,
@@ -256,7 +256,7 @@ impl LatencyMetrics {
             .init();
 
         Self {
-            meter,
+            _meter: meter,
             http_request_duration,
             db_query_duration,
             ldap_query_duration,
