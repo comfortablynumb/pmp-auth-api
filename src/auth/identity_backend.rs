@@ -81,6 +81,12 @@ impl std::fmt::Display for BackendError {
     }
 }
 
+impl From<ldap3::LdapError> for BackendError {
+    fn from(error: ldap3::LdapError) -> Self {
+        BackendError::ConnectionError(format!("LDAP error: {}", error))
+    }
+}
+
 /// Mock backend implementation for testing
 pub struct MockBackend {
     users: Vec<BackendUser>,

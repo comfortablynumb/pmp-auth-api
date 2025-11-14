@@ -1,7 +1,7 @@
 [package]
 name = "pmp-auth-api"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # Web framework
@@ -49,6 +49,32 @@ lazy_static = "1.4"
 
 # Random number generation
 rand = "0.8"
+
+# Redis for rate limiting and caching
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+
+# MFA and TOTP
+totp-lite = "2.0"
+qrcode = "0.14"
+urlencoding = "2.1"
+
+# Certificate management and cryptography
+x509-parser = "0.16"
+pkcs11 = "0.5"
+rustls = { version = "0.23", features = ["std"] }
+rustls-pemfile = "2.1"
+rcgen = "0.13"
+pem = "3.0"
+
+# LDAP/Active Directory
+ldap3 = { version = "0.11", features = ["tls-native"] }
+
+# Metrics and observability
+prometheus = "0.13"
+opentelemetry = { version = "0.24", features = ["metrics", "trace"] }
+opentelemetry-prometheus = "0.17"
+opentelemetry-otlp = { version = "0.17", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics", "trace"] }
 
 [dev-dependencies]
 # Testing

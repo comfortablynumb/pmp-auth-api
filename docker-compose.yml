@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # Main authentication API
+  pmp-auth-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmp-auth-api
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=debug
+      - CONFIG_PATH=/app/config.yaml
+      - DATABASE_URL=postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth
+      - REDIS_URL=redis://redis:6379
+      - LDAP_URL=ldap://openldap:389
+    volumes:
+      - ./config.docker.yaml:/app/config.yaml:ro
+      - ./keys:/app/keys:ro
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_started
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    container_name: pmp-postgres
+    environment:
+      - POSTGRES_USER=pmp_user
+      - POSTGRES_PASSWORD=pmp_password
+      - POSTGRES_DB=pmp_auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pmp_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: pmp-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # OpenLDAP for testing LDAP authentication
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: pmp-openldap
+    environment:
+      - LDAP_ORGANISATION="Example Corp"
+      - LDAP_DOMAIN=example.com
+      - LDAP_ADMIN_PASSWORD=admin_password
+      - LDAP_CONFIG_PASSWORD=config_password
+      - LDAP_TLS=false
+    ports:
+      - "389:389"
+      - "636:636"
+    volumes:
+      - ldap-data:/var/lib/ldap
+      - ldap-config:/etc/ldap/slapd.d
+      - ./docker/ldap/seed.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/seed.ldif:ro
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # phpLDAPadmin for LDAP management UI
+  phpldapadmin:
+    image: osixia/phpldapadmin:0.9.0
+    container_name: pmp-phpldapadmin
+    environment:
+      - PHPLDAPADMIN_LDAP_HOSTS=openldap
+      - PHPLDAPADMIN_HTTPS=false
+    ports:
+      - "8080:80"
+    depends_on:
+      - openldap
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pmp-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pmp-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+  # Mailhog for testing email (MFA, notifications)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: pmp-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - pmp-network
+    restart: unless-stopped
+
+networks:
+  pmp-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  ldap-data:
+  ldap-config:
+  prometheus-data:
+  grafana-data:

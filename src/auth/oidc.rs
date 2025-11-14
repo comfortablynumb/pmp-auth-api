@@ -2,11 +2,11 @@
 // This module implements the OIDC provider functionality on top of OAuth2
 
 use crate::models::{AppConfig, OAuth2ServerConfig, OidcProviderConfig};
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::Json;
 use chrono::Utc;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;

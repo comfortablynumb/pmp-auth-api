@@ -230,25 +230,37 @@ pub struct LdapBackendConfig {
     /// LDAP server URL (ldap://... or ldaps://...)
     pub url: String,
     /// Bind DN for authentication
-    pub bind_dn: String,
+    pub bind_dn: Option<String>,
     /// Bind password
-    pub bind_password: String,
+    pub bind_password: Option<String>,
     /// Base DN for user searches
     pub base_dn: String,
     /// User filter (e.g., "(uid={username})")
-    pub user_filter: String,
+    pub user_filter: Option<String>,
     /// Attributes to fetch
     #[serde(default = "default_ldap_attributes")]
-    pub attributes: Vec<String>,
+    pub attributes: Option<Vec<String>>,
+    /// ID attribute name (default: uid)
+    pub id_attribute: Option<String>,
+    /// Email attribute name (default: mail)
+    pub email_attribute: Option<String>,
+    /// Name attribute name (default: cn)
+    pub name_attribute: Option<String>,
+    /// Group base DN (for group queries)
+    pub group_base_dn: Option<String>,
+    /// Admin group DN (users in this group become admins)
+    pub admin_group: Option<String>,
+    /// Use StartTLS (default: false)
+    pub use_starttls: Option<bool>,
 }
 
-fn default_ldap_attributes() -> Vec<String> {
-    vec![
+fn default_ldap_attributes() -> Option<Vec<String>> {
+    Some(vec![
         "uid".to_string(),
         "mail".to_string(),
         "cn".to_string(),
         "displayName".to_string(),
-    ]
+    ])
 }
 
 /// Database backend configuration
@@ -385,23 +397,23 @@ impl AppConfig {
             }
 
             // Validate OAuth2 server config if present
-            if let Some(oauth2) = &tenant.identity_provider.oauth2
-                && oauth2.issuer.is_empty()
-            {
-                return Err(format!(
-                    "OAuth2 issuer for tenant '{}' cannot be empty",
-                    tenant_id
-                ));
+            if let Some(oauth2) = &tenant.identity_provider.oauth2 {
+                if oauth2.issuer.is_empty() {
+                    return Err(format!(
+                        "OAuth2 issuer for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
             }
 
             // Validate OIDC config if present
-            if let Some(oidc) = &tenant.identity_provider.oidc
-                && oidc.issuer.is_empty()
-            {
-                return Err(format!(
-                    "OIDC issuer for tenant '{}' cannot be empty",
-                    tenant_id
-                ));
+            if let Some(oidc) = &tenant.identity_provider.oidc {
+                if oidc.issuer.is_empty() {
+                    return Err(format!(
+                        "OIDC issuer for tenant '{}' cannot be empty",
+                        tenant_id
+                    ));
+                }
             }
 
             // Validate SAML config if present

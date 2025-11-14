@@ -1,10 +1,10 @@
 // Tenant management admin API
 
-use super::{AdminError, error_response, not_found, validation_error};
+use super::{error_response, not_found, validation_error, AdminError};
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use std::sync::Arc;
 use tracing::{debug, info};
 

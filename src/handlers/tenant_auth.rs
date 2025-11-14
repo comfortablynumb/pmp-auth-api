@@ -2,10 +2,10 @@
 // Will be replaced with OAuth2/OIDC/SAML provider endpoints
 
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Redirect;
+use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;

@@ -1,251 +1,567 @@
-# pmp-auth-api
+# PMP Auth API
 
-PMP Auth API: OAuth2 Authorization Server, OpenID Connect Provider, and SAML Identity Provider.
+**Enterprise-Grade Multi-Tenant Authentication & Authorization Platform**
 
-A high-performance multi-tenant authentication and authorization provider built with Rust and Axum. This API acts as an identity provider (IdP) and authorization server, supporting OAuth2, OpenID Connect (OIDC), and SAML 2.0 protocols.
+A high-performance, production-ready authentication and authorization platform built with Rust and Axum. This API serves as a comprehensive identity provider (IdP) and authorization server, supporting OAuth2, OpenID Connect (OIDC), and SAML 2.0 protocols with enterprise-grade security features.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Authentication Methods](#authentication-methods)
+- [Enterprise Security Features](#enterprise-security-features)
+- [Observability & Monitoring](#observability--monitoring)
+- [API Endpoints](#api-endpoints)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [Development](#development)
+- [Production Deployment](#production-deployment)
+- [Architecture](#architecture)
+- [License](#license)
 
 ## Overview
 
-This API provides:
-- **OAuth2 Authorization Server**: Full OAuth2 2.0 implementation with multiple grant types
-- **OpenID Connect Provider**: OIDC identity layer with ID tokens and userinfo endpoint
-- **SAML 2.0 Identity Provider**: Enterprise SSO with SAML IdP functionality
-- **API Key Management**: Long-lived JWT tokens for machine-to-machine authentication
-- **Device Authorization Grant**: RFC 8628 device flow for IoT and limited-input devices
-- **Token Introspection & Revocation**: RFC 7662 and RFC 7009 support
-- **Storage Backend Abstraction**: Pluggable storage (in-memory, PostgreSQL)
+PMP Auth API is a complete identity and access management (IAM) platform that provides:
+
+- **OAuth2 Authorization Server**: Full RFC 6749 implementation with PKCE support
+- **OpenID Connect Provider**: OIDC 1.0 identity layer with comprehensive claims
+- **SAML 2.0 Identity Provider**: Enterprise SSO with SAML assertions
+- **Multi-Factor Authentication**: TOTP (RFC 6238) and backup codes
+- **Session Management**: Activity tracking, device fingerprinting, concurrent session limits
+- **API Key Management**: Long-lived JWT tokens with scoped access control
+- **Device Flow**: RFC 8628 for IoT and limited-input devices
+- **Certificate Management**: Automatic key rotation with HSM support
+- **LDAP/Active Directory**: Integration with group synchronization
+- **Audit Logging**: Comprehensive compliance trails with 50+ event types
+- **Rate Limiting**: Brute force protection and DoS prevention
+- **Health Checks**: Kubernetes-compatible liveness and readiness probes
+- **Metrics**: Prometheus and OpenTelemetry integration
+
+## Key Features
+
+### 🏢 Multi-Tenancy
+- **Complete tenant isolation**: Separate configuration, keys, and data per tenant
+- **Flexible identity providers**: OAuth2, OIDC, and SAML simultaneously
+- **YAML-based configuration**: Easy tenant management
+- **Per-tenant signing keys**: Independent JWK sets for each tenant
 - **Admin API**: REST API for tenant, client, and user management
-- **Identity Backend Abstraction**: Pluggable user storage backends (LDAP, Database, OAuth2, Federated, Mock)
 
-## Features
+### 🔐 Authentication Methods
 
-### Multi-Tenancy
-- **Tenant isolation**: Each tenant has its own OAuth2/OIDC/SAML configuration
-- **Multiple identity providers per tenant**: Configure OAuth2, OIDC, and SAML simultaneously
-- **Flexible configuration**: YAML-based tenant configuration
-- **Per-tenant signing keys**: Separate JWK signing keys for each tenant
+#### OAuth2 Authorization Server (RFC 6749)
+- **Authorization Code Flow**: Full implementation with PKCE (RFC 7636)
+- **Client Credentials Flow**: Machine-to-machine authentication
+- **Refresh Token Flow**: Seamless token renewal
+- **Device Authorization Grant**: RFC 8628 for limited-input devices
+- **Resource Owner Password Credentials**: Optional direct password flow
+- **Token Introspection**: RFC 7662 token validation
+- **Token Revocation**: RFC 7009 immediate token invalidation
+- **PKCE Support**: S256 and plain challenge methods
+
+#### OpenID Connect (OIDC) 1.0
+- **Discovery Endpoint**: Standard OIDC metadata at `/.well-known/openid-configuration`
+- **UserInfo Endpoint**: Rich user profile information
+- **ID Token Generation**: JWT-based identity tokens
+- **Standard Claims**: sub, email, email_verified, name, picture, given_name, family_name
+- **Configurable Scopes**: openid, profile, email, and custom scopes
+
+#### SAML 2.0 Identity Provider
+- **Metadata Endpoint**: XML descriptor for Service Provider integration
+- **SSO Support**: HTTP-POST and HTTP-Redirect bindings
+- **Single Logout (SLO)**: Graceful session termination
+- **Signed Assertions**: X.509 certificate-based signatures
+- **NameID Format**: emailAddress and configurable formats
+- **Flexible Attributes**: Custom attribute mapping
+
+#### API Key Management
+- **Long-lived Tokens**: JWT-based API keys
+- **Scoped Access**: Fine-grained permissions per key
+- **Flexible Expiration**: Days-based or permanent keys
+- **Immediate Revocation**: Instant key invalidation
+- **Usage Tracking**: Created, last used, and revocation status
+
+#### Device Authorization Grant (RFC 8628)
+- **User-Friendly Codes**: 8-character codes (no ambiguous characters)
+- **Responsive UI**: Modern web verification page
+- **Status Tracking**: Pending, authorized, denied, expired states
+- **Configurable Polling**: Default 5-second interval
+- **Enterprise Support**: Perfect for smart TVs, IoT devices, CLI tools
+
+## Enterprise Security Features
+
+### 🔒 Multi-Factor Authentication (MFA)
+**Location**: `/src/mfa/`
+
+- **TOTP (Time-based OTP)**: RFC 6238 compliant
+  - 6-digit codes (configurable)
+  - 30-second time step (configurable)
+  - Time skew tolerance (±1 time step)
+  - QR code generation for authenticator apps (Google Authenticator, Authy, etc.)
+- **Backup Codes**: Emergency recovery mechanism
+  - Encrypted storage
+  - Single-use validation
+  - Automatic regeneration support
+
+### 📊 Session Management
+**Location**: `/src/session/`
+
+- **Comprehensive Activity Tracking**:
+  - Last activity timestamp
+  - IP address logging
+  - User agent capture
+  - Device information extraction
+  - Geographic location (optional)
+
+- **Device Recognition**:
+  - Device type detection (desktop, mobile, tablet)
+  - OS identification (Windows, macOS, Linux, iOS, Android)
+  - Browser detection (Chrome, Firefox, Safari, Edge, Opera)
+
+- **Session Controls**:
+  - Concurrent session limits (configurable per tenant)
+  - Idle timeout (default 1 hour)
+  - Absolute timeout (default 24 hours)
+  - Manual session termination
+  - Session status tracking (active, expired, terminated, invalidated)
+
+### 🛡️ Rate Limiting & Brute Force Protection
+**Location**: `/src/middleware/`
+
+- **Multiple Backends**:
+  - In-memory rate limiter (development)
+  - Redis-backed rate limiter (production, distributed)
+
+- **Configurable Policies**:
+  - Max requests per time window
+  - Failed login attempt tracking
+  - Automatic account lockout
+  - Configurable block duration
+  - IP-based and user-based limiting
+
+### 📝 Comprehensive Audit Logging
+**Location**: `/src/audit/`
+
+- **50+ Event Types**:
+  - Authentication (Login, LoginFailed, Logout)
+  - Token operations (Generated, Refreshed, Revoked, Introspected)
+  - MFA events (Enabled, Disabled, Verified, Failed)
+  - Password management (Changed, ResetRequested, ResetCompleted)
+  - Admin operations (Tenant/Client/User CRUD)
+  - Security events (RateLimitExceeded, BruteForceDetected, AccountLocked)
+  - Device flow (CodeGenerated, CodeAuthorized, CodeRejected)
+  - Session events (Created, Refreshed, Terminated, Expired)
+
+- **Rich Audit Data**:
+  - Timestamp, tenant_id, user_id, client_id
+  - IP address, user agent, geographic location
+  - Action type, resource type, resource ID
+  - Severity levels (INFO, WARNING, CRITICAL)
+  - Success/failure status
+  - Error messages and metadata
+  - Session ID and request ID for tracing
+
+- **Storage Options**:
+  - In-memory (development)
+  - PostgreSQL (production)
+  - Export capabilities for compliance reporting
+
+### 🔑 Certificate Management
+**Location**: `/src/certs/`
+
+- **Automatic Key Rotation**:
+  - Configurable rotation policies per tenant
+  - Grace period for zero-downtime rollover
+  - Background scheduler for automatic rotation
+  - Manual rotation triggers
+
+- **Advanced Key Management**:
+  - Multiple active keys simultaneously
+  - Key lifecycle management (generation, activation, deactivation)
+  - Automatic cleanup of expired keys
+  - Algorithm support: RS256, RS384, RS512, ES256, ES384, HS256, HS384, HS512
+
+- **Hardware Security Module (HSM) Integration**:
+  - PKCS#11 support
+  - AWS CloudHSM
+  - Azure Key Vault
+  - Google Cloud KMS
+  - Software fallback for development
+
+### 🏢 LDAP/Active Directory Integration
+**Location**: `/src/ldap/`
+
+- **Authentication & User Lookup**:
+  - LDAP bind authentication
+  - User search by ID, email, username
+  - Configurable search filters
+  - StartTLS/TLS support
+  - Connection pooling
+  - Health checks
+
+- **Group Management**:
+  - Group membership resolution
+  - Nested group expansion (recursive)
+  - Admin group assignment
+  - Configurable recursion depth
+  - Group membership caching
+
+- **Synchronization**:
+  - Periodic group sync scheduler
+  - Configurable sync intervals
+  - Sync statistics and monitoring
+  - Background task support
+
+## Observability & Monitoring
+
+### 🏥 Health Checks
+**Location**: `/src/health/`
+
+**Kubernetes-Compatible Endpoints**:
+- `GET /health` - General health check
+- `GET /healthz` - Liveness probe
+- `GET /livez` - Liveness probe
+- `GET /readyz` - Readiness probe
+
+**Health Check Types**:
+- **Liveness**: Critical system health (process alive, not deadlocked)
+- **Readiness**: All dependencies available (database, Redis, LDAP)
+- **Startup**: One-time initialization validation
+
+**Dependency Checks**:
+- Database connectivity (PostgreSQL, MySQL)
+- Redis connectivity
+- LDAP/AD connectivity
+- External OAuth2 providers
+- System health and uptime
+
+**Features**:
+- Background health monitoring
+- Health check caching
+- Configurable timeouts
+- Critical vs non-critical checks
+- Detailed JSON health status responses
+
+### 📈 Prometheus Metrics
+**Location**: `/src/metrics/`
+
+**Token Metrics**:
+- `tokens_issued_total{tenant_id, token_type}` - Total tokens issued
+- `tokens_revoked_total{tenant_id, token_type}` - Total tokens revoked
+- Token lifetime tracking
+
+**Authentication Metrics**:
+- `auth_attempts_total{tenant_id, backend_type}` - Total auth attempts
+- `auth_success_total{tenant_id, backend_type}` - Successful authentications
+- `auth_failures_total{tenant_id, backend_type, reason}` - Failed attempts with reasons
+
+**Performance Metrics**:
+- `request_duration_seconds{tenant_id, method, endpoint, status}` - Request latency histograms
+- `active_sessions{tenant_id}` - Current active sessions gauge
+- `ldap_query_duration_seconds` - LDAP query latency
+- `db_query_duration_seconds` - Database query latency
+
+**Error Tracking**:
+- `errors_total{tenant_id, error_type, endpoint}` - Error counts by type
+
+**Resource Pool Metrics**:
+- LDAP connection pool status
+- Database connection pool status
+- Redis connection pool status
+
+**OAuth2/SAML Metrics**:
+- Authorization request counts
+- SAML assertion generation metrics
+- Device code flow metrics
+
+**Prometheus Endpoint**: `GET /metrics`
+
+### 🔭 OpenTelemetry Integration
+**Location**: `/src/metrics/opentelemetry.rs`
+
+- Prometheus exporter support
+- Service metadata (name, version)
+- Custom meter and tracer support
+- OTLP exporter capability
+- Graceful shutdown support
+- Distributed tracing readiness
+
+## API Endpoints
+
+### Base URL Pattern
+- Multi-tenant: `/api/v1/tenant/{tenant_id}/*`
+- Admin API: `/api/v1/admin/*`
+- System: `/health`, `/metrics`, `/device`
 
 ### OAuth2 Authorization Server
-- **Grant types**: authorization_code, client_credentials, refresh_token, device_code (RFC 8628)
-- **Token endpoints**: `/oauth/authorize`, `/oauth/token`, `/oauth/device/authorize`, `/oauth/device/token`
-- **JWKS endpoint**: Public key distribution at `/.well-known/jwks.json`
-- **Token introspection**: RFC 7662 token validation at `/oauth/introspect`
-- **Token revocation**: RFC 7009 token revocation at `/oauth/revoke`
-- **PKCE support**: RFC 7636 Proof Key for Code Exchange
-- **Configurable token expiration**: Access tokens and refresh tokens
-- **Multiple signing algorithms**: RS256, ES256
 
-### OpenID Connect (OIDC) Provider
-- **Discovery endpoint**: `/.well-known/openid-configuration`
-- **UserInfo endpoint**: `/oauth/userinfo`
-- **ID token generation**: JWT ID tokens with standard and extended claims
-- **Supported claims**: sub, email, email_verified, name, picture, and more
-- **Configurable scopes**: openid, profile, email
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/oauth/authorize` | GET | Authorization Code Flow - request authorization |
+| `/oauth/token` | POST | Exchange authorization code or credentials for tokens |
+| `/oauth/introspect` | POST | RFC 7662 - Validate token and retrieve metadata |
+| `/oauth/revoke` | POST | RFC 7009 - Revoke access or refresh token |
+| `/.well-known/jwks.json` | GET | Public key distribution (JWK Set) |
+
+### OpenID Connect
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/.well-known/openid-configuration` | GET | OIDC Discovery metadata |
+| `/oauth/userinfo` | GET | User profile information (requires access token) |
 
 ### SAML 2.0 Identity Provider
-- **SAML metadata endpoint**: XML descriptor for SP integration
-- **SSO endpoints**: HTTP-POST and HTTP-Redirect bindings
-- **SLO (Single Logout)**: Session termination support
-- **SAML assertions**: Signed assertions with user attributes
-- **Flexible configuration**: Entity ID, SSO/SLO URLs, certificates
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/saml/metadata` | GET | SAML IdP metadata XML descriptor |
+| `/saml/sso` | GET/POST | Single Sign-On endpoint (Redirect/POST binding) |
+| `/saml/slo` | POST | Single Logout endpoint |
 
 ### API Key Management
-- **Long-lived JWT tokens**: For machine-to-machine authentication
-- **Custom scopes**: Fine-grained access control per API key
-- **Configurable expiration**: Days or no expiration
-- **Revocation support**: Immediate key revocation
-- **Metadata tracking**: Created, last used, revoked status
 
-### Identity Backends
-- **Mock Backend**: Testing backend with predefined users
-- **OAuth2 Backend**: External providers (Google, GitHub, etc.) - *stub*
-- **LDAP Backend**: Active Directory integration - *stub*
-- **Database Backend**: PostgreSQL/MySQL - *stub*
-- **Federated Backend**: Upstream OIDC providers - *stub*
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api-keys/create` | POST | Create new API key with scopes |
+| `/api-keys/list` | GET | List all API keys for user |
+| `/api-keys/{key_id}/revoke` | POST | Revoke specific API key |
 
-### Device Authorization Grant (RFC 8628)
-- **Device flow for limited-input devices**: Smart TVs, IoT devices, CLI tools
-- **User-friendly codes**: 8-character codes with unambiguous characters (no I, O, 0, 1)
-- **Device endpoints**: Device authorization, token polling, verification, confirmation
-- **Web verification page**: Modern responsive UI at `/device`
-- **Status tracking**: Pending, authorized, denied, expired
-- **Configurable polling interval**: Default 5 seconds
+### Device Flow (RFC 8628)
 
-### Storage Backend
-- **Pluggable architecture**: Trait-based storage abstraction
-- **In-memory storage**: Default, no persistence, perfect for development
-- **PostgreSQL storage**: Production-ready with full schema and migrations
-- **Supports**: Authorization codes, refresh tokens, API keys, sessions, device codes, token revocation
-- **Database migrations**: Complete PostgreSQL schema with indexes and cleanup procedures
-- **Future backends**: Redis, MySQL, DynamoDB (extensible design)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/oauth/device/authorize` | POST | Request device code and user code |
+| `/oauth/device/token` | POST | Poll for token (by device) |
+| `/oauth/device/verify` | POST | Verify user code (internal) |
+| `/oauth/device/confirm` | POST | Confirm authorization (internal) |
 
 ### Admin API
-- **Tenant management**: CRUD operations for tenants
-- **Client management**: OAuth2 client registration and management
-- **User management**: Create, update, delete, list users
-- **RESTful design**: Standard HTTP methods (GET, POST, PUT, DELETE)
-- **Validation**: Comprehensive request validation and error handling
-- **Endpoints**: `/api/v1/admin/tenants`, `/api/v1/admin/tenants/{id}/clients`, `/api/v1/admin/tenants/{id}/users`
 
-### Security & Features
-- JWT-based authentication with JWK signing
-- Role-based authorization (User, Admin)
-- RESTful API design
-- Comprehensive error handling
-- CORS support
-- Request tracing and logging
+#### Tenant Management
+- `GET /api/v1/admin/tenants` - List all tenants
+- `POST /api/v1/admin/tenants` - Create new tenant
+- `GET /api/v1/admin/tenants/{tenant_id}` - Get tenant details
+- `PUT /api/v1/admin/tenants/{tenant_id}` - Update tenant
+- `DELETE /api/v1/admin/tenants/{tenant_id}` - Delete tenant
 
-## Prerequisites
+#### Client Management
+- `GET /api/v1/admin/tenants/{tenant_id}/clients` - List OAuth2 clients
+- `POST /api/v1/admin/tenants/{tenant_id}/clients` - Register new client
+- `GET /api/v1/admin/tenants/{tenant_id}/clients/{client_id}` - Get client
+- `PUT /api/v1/admin/tenants/{tenant_id}/clients/{client_id}` - Update client
+- `DELETE /api/v1/admin/tenants/{tenant_id}/clients/{client_id}` - Delete client
 
-- Rust 1.91+ (Rust 2024 edition)
-- Cargo (comes with Rust)
+#### User Management
+- `GET /api/v1/admin/tenants/{tenant_id}/users` - List users
+- `POST /api/v1/admin/tenants/{tenant_id}/users` - Create user
+- `GET /api/v1/admin/tenants/{tenant_id}/users/{user_id}` - Get user
+- `PUT /api/v1/admin/tenants/{tenant_id}/users/{user_id}` - Update user
+- `DELETE /api/v1/admin/tenants/{tenant_id}/users/{user_id}` - Delete user
+
+### System Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | General health check |
+| `/healthz` | GET | Kubernetes liveness probe |
+| `/livez` | GET | Liveness probe |
+| `/readyz` | GET | Readiness probe |
+| `/metrics` | GET | Prometheus metrics |
+| `/device` | GET | Device flow verification page (web UI) |
 
 ## Quick Start
 
-1. Clone the repository:
+### Prerequisites
+
+- Rust 1.91+ (Rust 2024 edition)
+- Cargo (included with Rust)
+- PostgreSQL (optional, for production)
+- Redis (optional, for distributed rate limiting)
+
+### Installation
+
+1. **Clone the repository**:
 ```bash
 git clone <repository-url>
 cd pmp-auth-api
 ```
 
-2. Configure tenants:
+2. **Generate signing keys**:
 ```bash
-cp config.example.yaml config.yaml
-# Edit config.yaml to configure your tenants and identity providers
+# OAuth2/OIDC signing keys
+openssl genrsa -out oauth2-private.pem 2048
+openssl rsa -in oauth2-private.pem -pubout -out oauth2-public.pem
+
+# API key signing keys
+openssl genrsa -out api-key-private.pem 2048
+openssl rsa -in api-key-private.pem -pubout -out api-key-public.pem
 ```
 
-3. Build and run:
+3. **Configure tenants**:
 ```bash
-cargo build
-cargo run
+cp config.example.yaml config.yaml
+# Edit config.yaml with your tenant configuration
+```
+
+4. **Build and run**:
+```bash
+cargo build --release
+cargo run --release
 ```
 
 The API will start on `http://0.0.0.0:3000`
 
-## Tenant Configuration
+### Docker Quick Start
 
-Create a `config.yaml` file to configure tenants and identity providers.
+```bash
+docker build -t pmp-auth-api .
+docker run -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml pmp-auth-api
+```
 
-### Configuration Structure
+## Configuration
+
+### Configuration File Structure
+
+Create a `config.yaml` file with the following structure:
 
 ```yaml
 tenants:
-  tenant-id:
-    id: tenant-id
-    name: "Tenant Name"
-    description: "Optional description"
+  my-tenant:
+    id: my-tenant
+    name: "My Organization"
+    description: "Production authentication tenant"
     active: true
 
-    # Identity Provider Configuration (what this API provides)
+    # Session management configuration
+    session:
+      idle_timeout_secs: 3600      # 1 hour
+      absolute_timeout_secs: 86400  # 24 hours
+      max_concurrent_sessions: 5
+      track_location: true
+
+    # Rate limiting configuration
+    rate_limiting:
+      enabled: true
+      max_requests: 100
+      window_secs: 60
+      max_failed_attempts: 5
+      block_duration_secs: 300
+
+    # Audit logging configuration
+    audit:
+      enabled: true
+      log_level: "INFO"  # INFO, WARNING, CRITICAL
+      storage: "postgres"  # memory or postgres
+
+    # Certificate management
+    certificates:
+      rotation_enabled: true
+      rotation_interval_days: 90
+      grace_period_days: 7
+      hsm_enabled: false
+      hsm_provider: "software"  # software, pkcs11, aws, azure, gcp
+
+    # Identity Provider Configuration
     identity_provider:
       oauth2:
-        # OAuth2 Authorization Server config
+        issuer: "https://auth.example.com"
+        grant_types:
+          - "authorization_code"
+          - "client_credentials"
+          - "refresh_token"
+          - "urn:ietf:params:oauth:grant-type:device_code"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 2592000
+        signing_key:
+          algorithm: "RS256"
+          kid: "oauth2-key-1"
+          private_key: "oauth2-private.pem"
+          public_key: "oauth2-public.pem"
+
       oidc:
-        # OpenID Connect Provider config
+        issuer: "https://auth.example.com"
+        userinfo_endpoint: "/oauth/userinfo"
+        claims_supported:
+          - "sub"
+          - "email"
+          - "email_verified"
+          - "name"
+          - "picture"
+          - "given_name"
+          - "family_name"
+        scopes_supported:
+          - "openid"
+          - "profile"
+          - "email"
+        id_token_expiration_secs: 3600
+
       saml:
-        # SAML IdP config
+        entity_id: "https://auth.example.com/saml/metadata"
+        sso_url: "/saml/sso"
+        slo_url: "/saml/slo"
+        certificate: "saml-cert.pem"
+        private_key: "saml-key.pem"
+        name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 
     # Identity Backend (where users come from)
     identity_backend:
-      type: mock  # or oauth2, ldap, database, federated
-      # Backend-specific config...
+      type: "ldap"  # mock, oauth2, ldap, database, federated
 
-    # API Key Management (optional)
+      # LDAP configuration
+      url: "ldaps://ldap.example.com"
+      bind_dn: "cn=admin,dc=example,dc=com"
+      bind_password: "password"
+      base_dn: "ou=users,dc=example,dc=com"
+      user_filter: "(uid={username})"
+      start_tls: true
+
+      # Group synchronization
+      groups:
+        enabled: true
+        base_dn: "ou=groups,dc=example,dc=com"
+        group_filter: "(objectClass=groupOfNames)"
+        member_attribute: "member"
+        recursive: true
+        max_depth: 10
+        sync_interval_secs: 3600
+
+    # API Key Management
     api_keys:
       enabled: true
-      # API key config...
+      expiration_secs: 0  # 0 = no expiration
+      allowed_scopes:
+        - "api:read"
+        - "api:write"
+        - "admin:all"
+      signing_key:
+        algorithm: "RS256"
+        kid: "api-key-1"
+        private_key: "api-key-private.pem"
+        public_key: "api-key-public.pem"
 ```
 
-### OAuth2 Authorization Server Configuration
+### Environment Variables
 
-```yaml
-identity_provider:
-  oauth2:
-    issuer: "https://auth.example.com"
-    grant_types:
-      - "authorization_code"
-      - "client_credentials"
-      - "refresh_token"
-    token_endpoint: "/oauth/token"
-    authorize_endpoint: "/oauth/authorize"
-    jwks_endpoint: "/.well-known/jwks.json"
-    access_token_expiration_secs: 3600    # 1 hour
-    refresh_token_expiration_secs: 2592000  # 30 days
-    signing_key:
-      algorithm: "RS256"
-      kid: "oauth2-key-1"
-      private_key: "path/to/private.pem"
-      public_key: "path/to/public.pem"
-```
+- `CONFIG_PATH` - Path to configuration file (default: `./config.yaml`)
+- `RUST_LOG` - Logging level (default: `pmp_auth_api=debug,tower_http=debug`)
+- `DATABASE_URL` - PostgreSQL connection string (for production storage)
+- `REDIS_URL` - Redis connection string (for distributed rate limiting)
 
-### OpenID Connect Provider Configuration
+### Identity Backend Options
 
-```yaml
-identity_provider:
-  oidc:
-    issuer: "https://auth.example.com"
-    userinfo_endpoint: "/oauth/userinfo"
-    claims_supported:
-      - "sub"
-      - "email"
-      - "email_verified"
-      - "name"
-      - "picture"
-    scopes_supported:
-      - "openid"
-      - "profile"
-      - "email"
-    id_token_expiration_secs: 3600  # 1 hour
-```
-
-### SAML Identity Provider Configuration
-
-```yaml
-identity_provider:
-  saml:
-    entity_id: "https://auth.example.com/saml/metadata"
-    sso_url: "/saml/sso"
-    slo_url: "/saml/slo"
-    certificate: "path/to/certificate.pem"
-    private_key: "path/to/private-key.pem"
-    metadata_endpoint: "/saml/metadata"
-    name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
-```
-
-### Identity Backend Configuration
-
-#### Mock Backend (for testing)
-
+#### Mock Backend (Development)
 ```yaml
 identity_backend:
   type: mock
   users:
     - id: "user-1"
-      email: "user@example.com"
-      name: "Test User"
-      attributes:
-        department: "Engineering"
+      email: "admin@example.com"
+      name: "Admin User"
+      password_hash: "$2b$12$..."
+      role: "Admin"
 ```
 
-#### OAuth2 Backend (external providers)
-
-```yaml
-identity_backend:
-  type: oauth2
-  provider: "google"  # or github, microsoft, etc.
-  client_id: "your-client-id"
-  client_secret: "your-client-secret"
-  auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
-  token_url: "https://oauth2.googleapis.com/token"
-  userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo"
-  scopes:
-    - "openid"
-    - "email"
-    - "profile"
-```
-
-#### LDAP Backend (Active Directory)
-
+#### LDAP/Active Directory
 ```yaml
 identity_backend:
   type: ldap
@@ -261,8 +577,23 @@ identity_backend:
     - "displayName"
 ```
 
-#### Database Backend
+#### OAuth2 Backend (External Providers)
+```yaml
+identity_backend:
+  type: oauth2
+  provider: "google"
+  client_id: "your-client-id"
+  client_secret: "your-client-secret"
+  auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+  token_url: "https://oauth2.googleapis.com/token"
+  userinfo_url: "https://www.googleapis.com/oauth2/v3/userinfo"
+  scopes:
+    - "openid"
+    - "email"
+    - "profile"
+```
 
+#### Database Backend
 ```yaml
 identity_backend:
   type: database
@@ -272,625 +603,277 @@ identity_backend:
   password_field: "password_hash"
 ```
 
-### API Key Configuration
-
-```yaml
-api_keys:
-  enabled: true
-  expiration_secs: 0  # 0 = no expiration
-  allowed_scopes:
-    - "api:read"
-    - "api:write"
-    - "admin:all"
-  signing_key:
-    algorithm: "RS256"
-    kid: "api-key-1"
-    private_key: "path/to/api-key-private.pem"
-    public_key: "path/to/api-key-public.pem"
-```
-
-See `config.example.yaml` for complete examples.
-
-## API Endpoints
-
-### OAuth2 Authorization Server
-
-#### Authorization Endpoint
-```bash
-GET /api/v1/tenant/{tenant_id}/oauth/authorize
-  ?response_type=code
-  &client_id=client-id
-  &redirect_uri=https://app.example.com/callback
-  &scope=openid profile email
-  &state=random-state
-```
-
-#### Token Endpoint
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/token
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=authorization_code&
-code=authorization-code&
-client_id=client-id&
-client_secret=client-secret&
-redirect_uri=https://app.example.com/callback
-```
-
-Response:
-```json
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "refresh-token-here",
-  "scope": "openid profile email"
-}
-```
-
-#### JWKS Endpoint (Public Keys)
-```bash
-GET /api/v1/tenant/{tenant_id}/.well-known/jwks.json
-```
-
-Response:
-```json
-{
-  "keys": [
-    {
-      "kty": "RSA",
-      "use": "sig",
-      "kid": "oauth2-key-1",
-      "n": "base64-encoded-modulus...",
-      "e": "AQAB"
-    }
-  ]
-}
-```
-
-### OpenID Connect (OIDC)
-
-#### Discovery Endpoint
-```bash
-GET /api/v1/tenant/{tenant_id}/.well-known/openid-configuration
-```
-
-Response:
-```json
-{
-  "issuer": "https://auth.example.com",
-  "authorization_endpoint": "https://auth.example.com/api/v1/tenant/{tenant_id}/oauth/authorize",
-  "token_endpoint": "https://auth.example.com/api/v1/tenant/{tenant_id}/oauth/token",
-  "userinfo_endpoint": "https://auth.example.com/api/v1/tenant/{tenant_id}/oauth/userinfo",
-  "jwks_uri": "https://auth.example.com/api/v1/tenant/{tenant_id}/.well-known/jwks.json",
-  "scopes_supported": ["openid", "profile", "email"],
-  "response_types_supported": ["code", "token"],
-  "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"]
-}
-```
-
-#### UserInfo Endpoint
-```bash
-GET /api/v1/tenant/{tenant_id}/oauth/userinfo
-Authorization: Bearer <access_token>
-```
-
-Response:
-```json
-{
-  "sub": "user-123",
-  "email": "user@example.com",
-  "email_verified": true,
-  "name": "John Doe",
-  "picture": "https://example.com/photo.jpg",
-  "given_name": "John",
-  "family_name": "Doe"
-}
-```
-
-### SAML 2.0 Identity Provider
-
-#### Metadata Endpoint
-```bash
-GET /api/v1/tenant/{tenant_id}/saml/metadata
-```
-
-Returns XML descriptor for Service Provider integration.
-
-#### SSO Endpoint (HTTP-POST)
-```bash
-POST /api/v1/tenant/{tenant_id}/saml/sso
-Content-Type: application/x-www-form-urlencoded
-
-SAMLRequest=base64-encoded-saml-request&
-RelayState=optional-relay-state
-```
-
-#### SSO Endpoint (HTTP-Redirect)
-```bash
-GET /api/v1/tenant/{tenant_id}/saml/sso
-  ?SAMLRequest=base64-deflate-encoded-saml-request
-  &RelayState=optional-relay-state
-```
-
-#### Single Logout (SLO)
-```bash
-POST /api/v1/tenant/{tenant_id}/saml/slo
-Content-Type: application/x-www-form-urlencoded
-
-SAMLRequest=base64-encoded-logout-request
-```
-
-### API Key Management
-
-#### Create API Key
-```bash
-POST /api/v1/tenant/{tenant_id}/api-keys/create
-Content-Type: application/json
-
-{
-  "name": "Production API Key",
-  "scopes": ["api:read", "api:write"],
-  "expires_in_days": 90
-}
-```
-
-Response:
-```json
-{
-  "id": "key-uuid",
-  "name": "Production API Key",
-  "api_key": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "scopes": ["api:read", "api:write"],
-  "created_at": 1234567890,
-  "expires_at": 1242343890
-}
-```
-
-#### List API Keys
-```bash
-GET /api/v1/tenant/{tenant_id}/api-keys/list
-```
-
-Response:
-```json
-[
-  {
-    "id": "key-uuid",
-    "name": "Production API Key",
-    "scopes": ["api:read", "api:write"],
-    "created_at": 1234567890,
-    "expires_at": 1242343890,
-    "last_used": 1234567900,
-    "revoked": false
-  }
-]
-```
-
-#### Revoke API Key
-```bash
-POST /api/v1/tenant/{tenant_id}/api-keys/{key_id}/revoke
-```
-
-Response:
-```json
-{
-  "success": true,
-  "message": "API key revoked successfully"
-}
-```
-
-### Token Introspection (RFC 7662)
-
-#### Introspect Token
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/introspect
-Content-Type: application/x-www-form-urlencoded
-
-token=access-token-or-refresh-token&
-token_type_hint=access_token
-```
-
-Response:
-```json
-{
-  "active": true,
-  "scope": "read write",
-  "client_id": "client-123",
-  "token_type": "Bearer",
-  "exp": 1234567890,
-  "iat": 1234560000,
-  "sub": "user-id-123",
-  "iss": "https://auth.example.com"
-}
-```
-
-### Token Revocation (RFC 7009)
-
-#### Revoke Token
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/revoke
-Content-Type: application/x-www-form-urlencoded
-
-token=access-token-or-refresh-token&
-token_type_hint=refresh_token
-```
-
-Response: `200 OK` (always returns success per RFC 7009)
-
-### Device Authorization Grant (RFC 8628)
-
-#### Device Authorization Request
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/device/authorize
-Content-Type: application/json
-
-{
-  "client_id": "device-client-id",
-  "scope": "read write"
-}
-```
-
-Response:
-```json
-{
-  "device_code": "uuid-device-code",
-  "user_code": "WDJB-MJHT",
-  "verification_uri": "https://auth.example.com/device",
-  "verification_uri_complete": "https://auth.example.com/device?user_code=WDJB-MJHT",
-  "expires_in": 900,
-  "interval": 5
-}
-```
-
-#### Device Token Polling
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/device/token
-Content-Type: application/json
-
-{
-  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-  "device_code": "uuid-device-code",
-  "client_id": "device-client-id"
-}
-```
-
-Response (when authorized):
-```json
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "refresh-token-here",
-  "scope": "read write"
-}
-```
-
-Response (still pending):
-```json
-{
-  "error": "authorization_pending",
-  "error_description": "User has not yet authorized the device"
-}
-```
-
-#### Device Verification (Internal API)
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/device/verify
-Content-Type: application/json
-
-{
-  "user_code": "WDJB-MJHT"
-}
-```
-
-#### Device Confirmation (Internal API)
-```bash
-POST /api/v1/tenant/{tenant_id}/oauth/device/confirm
-Content-Type: application/json
-
-{
-  "user_code": "WDJB-MJHT",
-  "user_id": "user-123",
-  "authorized": true
-}
-```
-
-### Admin API
-
-#### Tenant Management
-
-##### List Tenants
-```bash
-GET /api/v1/admin/tenants
-```
-
-##### Get Tenant
-```bash
-GET /api/v1/admin/tenants/{tenant_id}
-```
-
-##### Create Tenant
-```bash
-POST /api/v1/admin/tenants
-Content-Type: application/json
-
-{
-  "id": "new-tenant",
-  "name": "New Tenant",
-  "description": "Description",
-  "identity_provider": { ... },
-  "identity_backend": { ... }
-}
-```
-
-##### Update Tenant
-```bash
-PUT /api/v1/admin/tenants/{tenant_id}
-Content-Type: application/json
-
-{
-  "name": "Updated Name",
-  "active": true
-}
-```
-
-##### Delete Tenant
-```bash
-DELETE /api/v1/admin/tenants/{tenant_id}
-```
-
-#### Client Management
-
-##### List Clients
-```bash
-GET /api/v1/admin/tenants/{tenant_id}/clients
-```
-
-##### Create Client
-```bash
-POST /api/v1/admin/tenants/{tenant_id}/clients
-Content-Type: application/json
-
-{
-  "name": "My Application",
-  "redirect_uris": ["https://app.example.com/callback"],
-  "grant_types": ["authorization_code", "refresh_token"],
-  "scopes": ["read", "write"]
-}
-```
-
-Response:
-```json
-{
-  "client_id": "client_abc123",
-  "client_secret": "secret_xyz789",
-  "name": "My Application",
-  "redirect_uris": ["https://app.example.com/callback"],
-  "grant_types": ["authorization_code", "refresh_token"],
-  "scopes": ["read", "write"],
-  "active": true,
-  "created_at": "2025-01-13T10:00:00Z"
-}
-```
-
-##### Update Client
-```bash
-PUT /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
-Content-Type: application/json
-
-{
-  "name": "Updated Application Name",
-  "active": false
-}
-```
-
-##### Delete Client
-```bash
-DELETE /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
-```
-
-#### User Management
-
-##### List Users
-```bash
-GET /api/v1/admin/tenants/{tenant_id}/users
-```
-
-##### Create User
-```bash
-POST /api/v1/admin/tenants/{tenant_id}/users
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "secure-password",
-  "name": "John Doe",
-  "role": "User"
-}
-```
-
-##### Update User
-```bash
-PUT /api/v1/admin/tenants/{tenant_id}/users/{user_id}
-Content-Type: application/json
-
-{
-  "email": "newemail@example.com",
-  "name": "Jane Doe",
-  "active": true
-}
-```
-
-##### Delete User
-```bash
-DELETE /api/v1/admin/tenants/{tenant_id}/users/{user_id}
-```
-
-### Tenant Discovery
-
-#### List Available Identity Providers
-```bash
-GET /api/v1/tenant/{tenant_id}/strategies
-```
-
-Response:
-```json
-{
-  "tenant_id": "test-tenant",
-  "tenant_name": "Test Tenant",
-  "strategies": [
-    {"name": "oauth2", "type": "OAuth2 Authorization Server"},
-    {"name": "oidc", "type": "OpenID Connect Provider"},
-    {"name": "saml", "type": "SAML 2.0 Identity Provider"}
-  ]
-}
-```
-
-### Health Check
-
-```bash
-GET /health
-GET /
-```
-
-Response:
-```json
-{
-  "status": "healthy",
-  "service": "pmp-auth-api",
-  "version": "0.1.0"
-}
-```
+## Examples
+
+See the `/examples` directory for comprehensive examples:
+
+1. **OAuth2 Client Credentials** (`examples/oauth2_client_credentials.md`) - Machine-to-machine authentication
+2. **OAuth2 Authorization Code Flow** (`examples/oauth2_authorization_code.md`) - Web app user login with PKCE
+3. **OpenID Connect** (`examples/openid_connect.md`) - User identity and SSO
+4. **API Key Management** (`examples/api_keys.md`) - Long-lived tokens for automation
+5. **SAML 2.0 SSO** (`examples/saml_sso.md`) - Enterprise SSO integration
+6. **Device Flow** (`examples/device_flow.md`) - IoT and CLI authentication
+7. **Multi-Factor Authentication** (`examples/mfa.md`) - TOTP setup and verification
+8. **Session Management** (`examples/session_management.md`) - Activity tracking and device management
+9. **LDAP Integration** (`examples/ldap_integration.md`) - Active Directory authentication
+10. **Audit Logging** (`examples/audit_logging.md`) - Compliance and security monitoring
 
 ## Development
 
-### Run in development mode
+### Build
+
 ```bash
-cargo run
+# Debug build
+cargo build
+
+# Release build (optimized)
+cargo build --release
 ```
 
-### Run tests
-```bash
-cargo test
-```
+### Run
 
-### Run with logging
 ```bash
+# Development mode with logging
 RUST_LOG=debug cargo run
+
+# Production mode
+cargo run --release
 ```
 
-### Format code
+### Test
+
 ```bash
+# Run all tests
+cargo test
+
+# Run specific test
+cargo test test_name
+
+# Run with output
+cargo test -- --nocapture
+```
+
+### Code Quality
+
+```bash
+# Format code
 cargo fmt
-```
 
-### Run linter
-```bash
+# Run linter
+cargo clippy
+
+# Run linter with warnings as errors
 cargo clippy -- -D warnings
 ```
 
-## Environment Variables
+### Database Setup (PostgreSQL)
 
-- `CONFIG_PATH` - Path to tenant configuration file (default: looks for config.yaml in current directory)
-- `RUST_LOG` - Logging level (default: "pmp_auth_api=debug,tower_http=debug")
+```bash
+# Create database
+createdb pmp_auth
 
-## Architecture
-
+# Run migrations
+psql pmp_auth < migrations/001_initial_schema.sql
 ```
-src/
-├── main.rs                      # Application entry point and route configuration
-├── config.rs                    # Configuration loader and validator
-├── auth/                        # Authentication and authorization logic
-│   ├── api_keys.rs             # API key management (create, list, revoke)
-│   ├── identity_backend.rs     # Identity backend abstraction (LDAP, DB, OAuth2, etc.)
-│   ├── jwt.rs                  # JWT token creation (legacy)
-│   ├── oauth2.rs               # OAuth2 client implementation (for backends)
-│   ├── oauth2_server.rs        # OAuth2 Authorization Server implementation
-│   ├── oidc.rs                 # OpenID Connect Provider implementation
-│   ├── password.rs             # Password hashing and verification
-│   ├── saml.rs                 # SAML 2.0 Identity Provider implementation
-│   └── strategies.rs           # Legacy strategy stubs
-├── handlers/                    # Request handlers
-│   ├── tenant_auth.rs          # Tenant strategy listing
-│   ├── health.rs               # Health check handler
-│   ├── auth.rs                 # Legacy handlers (deprecated)
-│   ├── user.rs                 # Legacy handlers (deprecated)
-│   └── admin.rs                # Legacy handlers (deprecated)
-├── middleware/                  # Middleware components
-│   ├── auth.rs                 # Legacy authentication middleware
-│   └── tenant_auth.rs          # Tenant authentication middleware
-└── models/                      # Data models
-    ├── tenant.rs               # Tenant, OAuth2, OIDC, SAML config models
-    └── user.rs                 # User, Claims, and request/response models
-```
-
-## Security Considerations
-
-- JWT tokens are signed with RSA or ECDSA keys (RS256, ES256)
-- Access tokens expire after 1 hour (configurable)
-- Refresh tokens expire after 30 days (configurable)
-- API keys can be revoked immediately
-- Use HTTPS in production
-- Store private keys securely (use key management services in production)
-- Implement rate limiting for production deployments
-- Validate redirect URIs for OAuth2 flows
-- Implement PKCE for authorization code flow
-- Sign SAML assertions with X.509 certificates
 
 ## Production Deployment
 
-For production deployment:
+### Security Checklist
 
-1. **Generate secure signing keys**:
-   ```bash
-   # RSA keys for OAuth2/OIDC
-   openssl genrsa -out oauth2-private.pem 2048
-   openssl rsa -in oauth2-private.pem -pubout -out oauth2-public.pem
+- [ ] Generate secure RSA/ECDSA keys (4096-bit recommended)
+- [ ] Use PostgreSQL for persistent storage (not in-memory)
+- [ ] Enable HTTPS/TLS with valid certificates
+- [ ] Configure proper CORS policies
+- [ ] Implement Redis for distributed rate limiting
+- [ ] Use production identity backends (LDAP/Database, not Mock)
+- [ ] Enable audit logging with PostgreSQL storage
+- [ ] Configure Kubernetes health checks
+- [ ] Enable Prometheus metrics export
+- [ ] Implement certificate rotation policies
+- [ ] Use HSM for production key storage
+- [ ] Set up proper backup and disaster recovery
+- [ ] Implement monitoring and alerting
+- [ ] Review and harden security headers
+- [ ] Enable MFA for all administrative accounts
 
-   # RSA keys for API keys
-   openssl genrsa -out api-key-private.pem 2048
-   openssl rsa -in api-key-private.pem -pubout -out api-key-public.pem
+### Kubernetes Deployment
 
-   # X.509 certificate for SAML
-   openssl req -newkey rsa:2048 -x509 -days 365 -nodes \
-     -out saml-cert.pem -keyout saml-key.pem
-   ```
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pmp-auth-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pmp-auth-api
+  template:
+    metadata:
+      labels:
+        app: pmp-auth-api
+    spec:
+      containers:
+      - name: pmp-auth-api
+        image: pmp-auth-api:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: pmp-auth-secrets
+              key: database-url
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: keys
+          mountPath: /keys
+      volumes:
+      - name: config
+        configMap:
+          name: pmp-auth-config
+      - name: keys
+        secret:
+          secretName: pmp-auth-keys
+```
 
-2. **Use environment-based configuration**: Store secrets in environment variables or key management services
+### Performance Tuning
 
-3. **Implement proper identity backends**: Replace Mock backend with LDAP, Database, or Federated backends
+- **Connection Pooling**: Configure database and Redis connection pools
+- **Caching**: Enable LDAP group membership caching
+- **Rate Limiting**: Use Redis backend for distributed environments
+- **Metrics**: Monitor request latency and optimize slow endpoints
+- **Horizontal Scaling**: Deploy multiple replicas behind load balancer
 
-4. **Enable HTTPS/TLS**: Use reverse proxy (nginx, Caddy) or configure TLS directly
+## Architecture
 
-5. **Set up proper CORS policies**: Configure allowed origins for your applications
+### Project Structure
 
-6. **Implement rate limiting**: Protect against brute force and DoS attacks
+```
+src/
+├── main.rs                  # Application entry point and routing
+├── config.rs                # Configuration management
+├── auth/                    # Core authentication logic
+│   ├── api_keys.rs         # API key management
+│   ├── device_flow.rs      # RFC 8628 Device Authorization Grant
+│   ├── identity_backend.rs # Identity provider abstraction
+│   ├── jwt.rs              # JWT token operations
+│   ├── oauth2.rs           # OAuth2 client implementation
+│   ├── oauth2_server.rs    # OAuth2 Authorization Server
+│   ├── oidc.rs             # OpenID Connect Provider
+│   ├── password.rs         # Password hashing (bcrypt)
+│   ├── saml.rs             # SAML 2.0 Identity Provider
+│   ├── strategies.rs       # Authentication strategies
+│   └── token_introspection.rs # RFC 7662 & 7009
+├── middleware/             # Request processing middleware
+│   ├── auth.rs            # Authentication middleware
+│   ├── rate_limit.rs      # Rate limiting abstraction
+│   ├── rate_limit_memory.rs # In-memory rate limiter
+│   ├── rate_limit_redis.rs  # Redis-backed rate limiter
+│   └── tenant_auth.rs     # Tenant authentication
+├── handlers/              # HTTP request handlers
+│   ├── admin.rs          # Admin API handlers
+│   ├── auth.rs           # Authentication handlers
+│   ├── device.rs         # Device flow UI
+│   ├── health.rs         # Health check endpoints
+│   ├── tenant_auth.rs    # Tenant-specific handlers
+│   └── user.rs           # User profile handlers
+├── admin/                # Admin API management
+│   ├── clients.rs       # OAuth2 client CRUD
+│   ├── tenants.rs       # Tenant CRUD
+│   └── users.rs         # User CRUD
+├── models/              # Data models
+│   ├── tenant.rs        # Tenant & configuration models
+│   └── user.rs          # User & claims models
+├── session/             # Session management
+│   ├── manager.rs       # Session lifecycle management
+│   ├── storage.rs       # Session persistence
+│   └── types.rs         # Session data structures
+├── mfa/                 # Multi-Factor Authentication
+│   ├── totp.rs         # Time-based OTP (RFC 6238)
+│   └── backup_codes.rs # Backup codes for MFA recovery
+├── ldap/                # LDAP/Active Directory
+│   ├── backend.rs       # LDAP authentication & lookup
+│   ├── groups.rs        # Group membership resolution
+│   └── sync.rs          # Group synchronization scheduler
+├── audit/               # Audit logging & compliance
+│   ├── logger.rs        # Audit event recording
+│   ├── storage.rs       # Audit log persistence
+│   └── types.rs         # Audit event types
+├── certs/               # Certificate management
+│   ├── manager.rs       # Certificate lifecycle
+│   ├── rotation.rs      # Automated key rotation
+│   └── hsm.rs           # Hardware Security Module integration
+├── metrics/             # Observability & monitoring
+│   ├── prometheus_metrics.rs # Prometheus metrics
+│   ├── opentelemetry.rs      # OpenTelemetry integration
+│   └── collectors.rs         # Metric collectors
+├── health/              # Health check system
+│   ├── checks.rs        # Health check implementations
+│   └── probes.rs        # Kubernetes-style probes
+└── storage/             # Data persistence abstraction
+    ├── memory.rs        # In-memory storage
+    └── postgres.rs      # PostgreSQL backend
+```
 
-7. **Add monitoring and alerting**: Track API usage, errors, and performance
+### Technology Stack
 
-8. **Implement audit logging**: Log all authentication attempts and token issuance
+- **Web Framework**: Axum 0.7 (async Rust)
+- **Async Runtime**: Tokio
+- **Authentication**: JWT, bcrypt, OAuth2, SAML
+- **Database**: PostgreSQL (via sqlx), Redis
+- **LDAP**: ldap3 with TLS support
+- **Metrics**: Prometheus, OpenTelemetry
+- **MFA**: TOTP (RFC 6238), QR codes
+- **Cryptography**: RSA, ECDSA, X.509, PKCS#11
+- **Serialization**: serde, serde_json, serde_yaml
 
-9. **Regular key rotation**: Rotate signing keys periodically
+### Standards Compliance
 
-10. **Database for persistence**: Replace in-memory storage with Redis or database
-
-## Protocol Support
-
-### OAuth 2.0
-- RFC 6749 - The OAuth 2.0 Authorization Framework
-- RFC 7519 - JSON Web Token (JWT)
-- RFC 7517 - JSON Web Key (JWK)
-
-### OpenID Connect
-- OpenID Connect Core 1.0
-- OpenID Connect Discovery 1.0
-
-### SAML 2.0
-- SAML 2.0 Core
-- SAML 2.0 Bindings (HTTP-POST, HTTP-Redirect)
-- SAML 2.0 Profiles (Web Browser SSO)
+- **OAuth 2.0**: RFC 6749, RFC 7636 (PKCE)
+- **OpenID Connect**: OIDC Core 1.0, OIDC Discovery 1.0
+- **SAML 2.0**: SAML Core, SAML Bindings, Web Browser SSO Profile
+- **JWT**: RFC 7519 (JWT), RFC 7517 (JWK)
+- **Token Management**: RFC 7662 (Introspection), RFC 7009 (Revocation)
+- **Device Flow**: RFC 8628
+- **MFA**: RFC 6238 (TOTP)
 
 ## License
 
 See [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Support
+
+For issues, questions, or feature requests, please open an issue on GitHub.
+
+## Roadmap
+
+- [ ] WebAuthn/FIDO2 support
+- [ ] Risk-based authentication
+- [ ] Passwordless authentication
+- [ ] Advanced fraud detection
+- [ ] Multi-region deployment support
+- [ ] GraphQL API
+- [ ] Mobile SDK (iOS, Android)
+- [ ] Admin dashboard UI
+- [ ] Terraform/Helm charts
+- [ ] High availability clustering

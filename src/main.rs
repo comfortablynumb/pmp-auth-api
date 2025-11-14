@@ -1,14 +1,21 @@
 mod admin;
+mod audit;
 mod auth;
+mod certs;
 mod config;
 mod handlers;
+mod health;
+mod ldap;
+mod metrics;
+mod mfa;
 mod middleware;
 mod models;
+mod session;
 mod storage;
 
 use axum::{
-    Router,
     routing::{get, post},
+    Router,
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
@@ -49,6 +56,15 @@ async fn main() {
         // Health check routes (always available)
         .route("/", get(handlers::health::health_check))
         .route("/health", get(handlers::health::health_check))
+        // Kubernetes-style health probes
+        .route("/healthz", get(handlers::health::health_check))
+        .route("/livez", get(handlers::health::health_check))
+        .route("/readyz", get(handlers::health::health_check))
+        // Metrics endpoint
+        .route(
+            "/metrics",
+            get(metrics::prometheus_metrics::metrics_handler),
+        )
         // Device authorization page
         .route("/device", get(handlers::device::device_page));
 

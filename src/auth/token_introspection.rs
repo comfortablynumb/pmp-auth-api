@@ -2,9 +2,9 @@
 // Allows resource servers to validate tokens and revoke access
 
 use crate::models::AppConfig;
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -155,23 +155,23 @@ fn introspect_token(
         if let Ok(claims) = key_result {
             // Check if token is expired
             let now = chrono::Utc::now().timestamp() as usize;
-            if let Some(exp) = claims.exp
-                && exp < now
-            {
-                return Ok(IntrospectionResponse {
-                    active: false,
-                    scope: claims.scope.clone(),
-                    client_id: claims.client_id.clone(),
-                    username: None,
-                    token_type: Some("Bearer".to_string()),
-                    exp: Some(exp as u64),
-                    iat: claims.iat.map(|i| i as u64),
-                    nbf: claims.nbf.map(|n| n as u64),
-                    sub: Some(claims.sub.clone()),
-                    aud: extract_audience(&claims.aud),
-                    iss: Some(claims.iss.clone()),
-                    jti: claims.jti.clone(),
-                });
+            if let Some(exp) = claims.exp {
+                if exp < now {
+                    return Ok(IntrospectionResponse {
+                        active: false,
+                        scope: claims.scope.clone(),
+                        client_id: claims.client_id.clone(),
+                        username: None,
+                        token_type: Some("Bearer".to_string()),
+                        exp: Some(exp as u64),
+                        iat: claims.iat.map(|i| i as u64),
+                        nbf: claims.nbf.map(|n| n as u64),
+                        sub: Some(claims.sub.clone()),
+                        aud: extract_audience(&claims.aud),
+                        iss: Some(claims.iss.clone()),
+                        jti: claims.jti.clone(),
+                    });
+                }
             }
 
             // Check if token is revoked (check API_KEYS storage for API keys)
@@ -217,23 +217,23 @@ fn introspect_token(
         if let Ok(claims) = key_result {
             // Check expiration
             let now = chrono::Utc::now().timestamp() as usize;
-            if let Some(exp) = claims.exp
-                && exp < now
-            {
-                return Ok(IntrospectionResponse {
-                    active: false,
-                    scope: claims.scope.clone(),
-                    client_id: claims.client_id.clone(),
-                    username: None,
-                    token_type: Some("Bearer".to_string()),
-                    exp: Some(exp as u64),
-                    iat: claims.iat.map(|i| i as u64),
-                    nbf: claims.nbf.map(|n| n as u64),
-                    sub: Some(claims.sub.clone()),
-                    aud: extract_audience(&claims.aud),
-                    iss: Some(claims.iss.clone()),
-                    jti: claims.jti.clone(),
-                });
+            if let Some(exp) = claims.exp {
+                if exp < now {
+                    return Ok(IntrospectionResponse {
+                        active: false,
+                        scope: claims.scope.clone(),
+                        client_id: claims.client_id.clone(),
+                        username: None,
+                        token_type: Some("Bearer".to_string()),
+                        exp: Some(exp as u64),
+                        iat: claims.iat.map(|i| i as u64),
+                        nbf: claims.nbf.map(|n| n as u64),
+                        sub: Some(claims.sub.clone()),
+                        aud: extract_audience(&claims.aud),
+                        iss: Some(claims.iss.clone()),
+                        jti: claims.jti.clone(),
+                    });
+                }
             }
 
             // Check revocation
@@ -285,7 +285,7 @@ fn decode_with_key(token: &str, _public_key_pem: &str) -> Result<TokenClaims, St
     }
 
     // Decode payload (second part)
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let payload_bytes = STANDARD
         .decode(parts[1])
         .map_err(|e| format!("Base64 decode error: {}", e))?;
@@ -300,10 +300,10 @@ fn decode_with_key(token: &str, _public_key_pem: &str) -> Result<TokenClaims, St
 fn is_api_key_revoked(key_id: &str) -> bool {
     use crate::auth::api_keys::API_KEYS;
 
-    if let Ok(keys) = API_KEYS.lock()
-        && let Some(key_metadata) = keys.get(key_id)
-    {
-        return key_metadata.revoked;
+    if let Ok(keys) = API_KEYS.lock() {
+        if let Some(key_metadata) = keys.get(key_id) {
+            return key_metadata.revoked;
+        }
     }
 
     false
@@ -353,29 +353,29 @@ pub async fn token_revoke(
     let parts: Vec<&str> = request.token.split('.').collect();
     if parts.len() == 3 {
         // Decode payload
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        if let Ok(payload_bytes) = STANDARD.decode(parts[1])
-            && let Ok(claims) = serde_json::from_slice::<TokenClaims>(&payload_bytes)
-        {
-            // Check if this is an API key
-            if claims.api_key == Some(true) {
-                // Revoke the API key
-                use crate::auth::api_keys::API_KEYS;
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        if let Ok(payload_bytes) = STANDARD.decode(parts[1]) {
+            if let Ok(claims) = serde_json::from_slice::<TokenClaims>(&payload_bytes) {
+                // Check if this is an API key
+                if claims.api_key == Some(true) {
+                    // Revoke the API key
+                    use crate::auth::api_keys::API_KEYS;
 
-                if let Ok(mut keys) = API_KEYS.lock()
-                    && let Some(key_metadata) = keys.get_mut(&claims.sub)
-                {
-                    key_metadata.revoked = true;
-                    info!("API key '{}' revoked successfully", claims.sub);
+                    if let Ok(mut keys) = API_KEYS.lock() {
+                        if let Some(key_metadata) = keys.get_mut(&claims.sub) {
+                            key_metadata.revoked = true;
+                            info!("API key '{}' revoked successfully", claims.sub);
+                        }
+                    }
+                } else {
+                    // For regular OAuth2 tokens, we would add to a revocation list
+                    // For now, just log it
+                    warn!(
+                        "Token revocation requested for OAuth2 token (not yet implemented): {}",
+                        claims.sub
+                    );
+                    // TODO: Add to revocation list in database
                 }
-            } else {
-                // For regular OAuth2 tokens, we would add to a revocation list
-                // For now, just log it
-                warn!(
-                    "Token revocation requested for OAuth2 token (not yet implemented): {}",
-                    claims.sub
-                );
-                // TODO: Add to revocation list in database
             }
         }
     }

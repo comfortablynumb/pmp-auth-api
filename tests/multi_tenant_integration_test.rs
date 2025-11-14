@@ -239,11 +239,9 @@ fn test_config_validation_errors() {
     };
     let result = config.validate();
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .contains("at least one identity provider")
-    );
+    assert!(result
+        .unwrap_err()
+        .contains("at least one identity provider"));
 
     // Test 2: Empty tenants
     let config = AppConfig {
