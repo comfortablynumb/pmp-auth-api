@@ -141,7 +141,7 @@ impl RateLimiter for RedisRateLimiter {
         if attempts >= self.max_failed_attempts {
             debug!("Blocking {} after {} failed attempts", key, attempts);
             let _: () = conn
-                .set_ex(&block_key, 1, self.block_duration_secs as u64)
+                .set_ex(&block_key, 1, self.block_duration_secs)
                 .await
                 .map_err(|e| format!("Redis error: {}", e))?;
         }

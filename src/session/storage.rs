@@ -122,38 +122,38 @@ impl SessionStorage for MemorySessionStorage {
             .values()
             .filter(|session| {
                 // Filter by user_id
-                if let Some(ref user_id) = query.user_id {
-                    if &session.user_id != user_id {
-                        return false;
-                    }
+                if let Some(ref user_id) = query.user_id
+                    && &session.user_id != user_id
+                {
+                    return false;
                 }
 
                 // Filter by tenant_id
-                if let Some(ref tenant_id) = query.tenant_id {
-                    if &session.tenant_id != tenant_id {
-                        return false;
-                    }
+                if let Some(ref tenant_id) = query.tenant_id
+                    && &session.tenant_id != tenant_id
+                {
+                    return false;
                 }
 
                 // Filter by client_id
-                if let Some(ref client_id) = query.client_id {
-                    if session.client_id.as_ref() != Some(client_id) {
-                        return false;
-                    }
+                if let Some(ref client_id) = query.client_id
+                    && session.client_id.as_ref() != Some(client_id)
+                {
+                    return false;
                 }
 
                 // Filter by status
-                if let Some(ref status) = query.status {
-                    if &session.status != status {
-                        return false;
-                    }
+                if let Some(ref status) = query.status
+                    && &session.status != status
+                {
+                    return false;
                 }
 
                 // Filter by IP address
-                if let Some(ref ip_address) = query.ip_address {
-                    if &session.ip_address != ip_address {
-                        return false;
-                    }
+                if let Some(ref ip_address) = query.ip_address
+                    && &session.ip_address != ip_address
+                {
+                    return false;
                 }
 
                 // Filter expired sessions

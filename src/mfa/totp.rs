@@ -177,7 +177,7 @@ impl TotpManager {
         }
 
         // Pad to multiple of 8
-        while result.len() % 8 != 0 {
+        while !result.len().is_multiple_of(8) {
             result.push('=');
         }
 

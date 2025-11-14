@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -187,9 +187,10 @@ impl CertificateManager {
 
     // Helper methods for key generation
 
+    #[allow(clippy::type_complexity)]
     fn generate_rsa_keypair(
         &self,
-        algorithm: Algorithm,
+        _algorithm: Algorithm,
     ) -> Result<(EncodingKey, DecodingKey, Option<Vec<u8>>), Box<dyn std::error::Error>> {
         let mut params = CertificateParams::default();
         params.distinguished_name = DistinguishedName::new();
@@ -206,6 +207,7 @@ impl CertificateManager {
         Ok((encoding_key, decoding_key, Some(public_pem.into_bytes())))
     }
 
+    #[allow(clippy::type_complexity)]
     fn generate_ec_keypair(
         &self,
         algorithm: Algorithm,
@@ -231,6 +233,7 @@ impl CertificateManager {
         Ok((encoding_key, decoding_key, Some(public_pem.into_bytes())))
     }
 
+    #[allow(clippy::type_complexity)]
     fn generate_hmac_key(
         &self,
         algorithm: Algorithm,

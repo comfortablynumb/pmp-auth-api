@@ -3,7 +3,7 @@ use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{Duration as TokioDuration, sleep};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use super::manager::CertificateManager;
 

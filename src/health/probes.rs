@@ -281,7 +281,6 @@ impl HealthProbeManager {
 }
 
 /// HTTP handlers for health probes
-
 pub async fn liveness_handler(
     axum::extract::State(manager): axum::extract::State<Arc<HealthProbeManager>>,
 ) -> impl IntoResponse {

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -139,10 +139,10 @@ impl GroupSyncManager {
     /// Check if user is member of a group (including nested)
     pub async fn is_user_in_group(&self, tenant_id: &str, user_dn: &str, group_dn: &str) -> bool {
         let groups = self.synced_groups.read().await;
-        if let Some(tenant_groups) = groups.get(tenant_id) {
-            if let Some(group) = tenant_groups.iter().find(|g| g.dn == group_dn) {
-                return group.nested_members.contains(&user_dn.to_string());
-            }
+        if let Some(tenant_groups) = groups.get(tenant_id)
+            && let Some(group) = tenant_groups.iter().find(|g| g.dn == group_dn)
+        {
+            return group.nested_members.contains(&user_dn.to_string());
         }
         false
     }

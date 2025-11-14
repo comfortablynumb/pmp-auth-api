@@ -2,7 +2,6 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter, UpDownCounter},
 };
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Token-related metrics collector

@@ -148,17 +148,17 @@ impl RateLimiter for MemoryRateLimiter {
         let mut attempts = self.failed_attempts.write().await;
         let now = current_timestamp();
 
-        if let Some(entry) = attempts.get_mut(key) {
-            if let Some(blocked_until) = entry.blocked_until {
-                if now < blocked_until {
-                    return Ok(true);
-                } else {
-                    // Unblock and reset
-                    entry.blocked_until = None;
-                    entry.count = 0;
-                    entry.first_attempt = now;
-                    return Ok(false);
-                }
+        if let Some(entry) = attempts.get_mut(key)
+            && let Some(blocked_until) = entry.blocked_until
+        {
+            if now < blocked_until {
+                return Ok(true);
+            } else {
+                // Unblock and reset
+                entry.blocked_until = None;
+                entry.count = 0;
+                entry.first_attempt = now;
+                return Ok(false);
             }
         }
 

@@ -304,12 +304,11 @@ impl LdapBackendImpl {
     /// Determine user role based on LDAP group membership
     fn determine_role(&self, entry: &SearchEntry) -> UserRole {
         // Check if user is in admin group
-        if let Some(admin_group) = &self.config.admin_group {
-            if let Some(member_of) = entry.attrs.get("memberOf") {
-                if member_of.iter().any(|dn| dn.contains(admin_group)) {
-                    return UserRole::Admin;
-                }
-            }
+        if let Some(admin_group) = &self.config.admin_group
+            && let Some(member_of) = entry.attrs.get("memberOf")
+            && member_of.iter().any(|dn| dn.contains(admin_group))
+        {
+            return UserRole::Admin;
         }
 
         UserRole::User

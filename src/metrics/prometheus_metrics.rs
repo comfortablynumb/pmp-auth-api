@@ -5,7 +5,7 @@ use axum::{
 };
 use lazy_static::lazy_static;
 use prometheus::{
-    Counter, CounterVec, Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter,
+    Encoder, Histogram, HistogramOpts, HistogramVec,
     IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::sync::Arc;

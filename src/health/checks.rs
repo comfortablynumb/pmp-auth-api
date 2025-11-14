@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HealthStatus {

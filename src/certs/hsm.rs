@@ -188,7 +188,7 @@ impl HsmProvider for SoftwareHsmProvider {
         Ok(keys.keys().cloned().collect())
     }
 
-    async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn sign(&self, _key_id: &str, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // In a real HSM, this would use the HSM's signing capabilities
         // For software implementation, we'd use the encoding key
         // This is a simplified placeholder
@@ -197,7 +197,7 @@ impl HsmProvider for SoftwareHsmProvider {
 
     async fn verify(
         &self,
-        key_id: &str,
+        _key_id: &str,
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -214,21 +214,21 @@ impl HsmProvider for SoftwareHsmProvider {
 
 /// PKCS#11 HSM provider implementation
 pub struct Pkcs11HsmProvider {
-    config: HsmConfig,
+    _config: HsmConfig,
 }
 
 impl Pkcs11HsmProvider {
     pub fn new(config: HsmConfig) -> Self {
-        Self { config }
+        Self { _config: config }
     }
 
     /// Initialize PKCS#11 context
-    fn init_context(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn _init_context(&self) -> Result<(), Box<dyn std::error::Error>> {
         // This would initialize the PKCS#11 library
         // Using the library_path from config
         info!(
             "Initializing PKCS#11 HSM with library: {:?}",
-            self.config.library_path
+            self._config.library_path
         );
         // Real implementation would use pkcs11 crate
         Ok(())
@@ -240,7 +240,7 @@ impl HsmProvider for Pkcs11HsmProvider {
     async fn generate_keypair(
         &self,
         key_id: &str,
-        algorithm: Algorithm,
+        _algorithm: Algorithm,
     ) -> Result<HsmKeyHandle, Box<dyn std::error::Error>> {
         info!("Generating PKCS#11 HSM key: {}", key_id);
 
@@ -254,11 +254,11 @@ impl HsmProvider for Pkcs11HsmProvider {
         Err("PKCS#11 HSM integration not fully implemented - use software mode for testing".into())
     }
 
-    async fn get_key(&self, key_id: &str) -> Result<HsmKeyHandle, Box<dyn std::error::Error>> {
+    async fn get_key(&self, _key_id: &str) -> Result<HsmKeyHandle, Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
-    async fn delete_key(&self, key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    async fn delete_key(&self, _key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
@@ -266,20 +266,20 @@ impl HsmProvider for Pkcs11HsmProvider {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
-    async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn sign(&self, _key_id: &str, _data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
     async fn verify(
         &self,
-        key_id: &str,
-        data: &[u8],
-        signature: &[u8],
+        _key_id: &str,
+        _data: &[u8],
+        _signature: &[u8],
     ) -> Result<bool, Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 
-    async fn get_public_key(&self, key_id: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn get_public_key(&self, _key_id: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Err("PKCS#11 HSM integration not fully implemented".into())
     }
 }
