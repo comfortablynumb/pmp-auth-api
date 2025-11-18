@@ -61,6 +61,9 @@ pub struct OAuth2ServerConfig {
     pub refresh_token_expiration_secs: i64,
     /// JWK signing configuration
     pub signing_key: JwkSigningConfig,
+    /// Whether password grant is enabled (default: false for security)
+    #[serde(default)]
+    pub password_grant_enabled: bool,
 }
 
 fn default_grant_types() -> Vec<String> {
@@ -473,5 +476,84 @@ impl AppConfig {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oauth2_config_password_grant_default_false() {
+        let yaml = r#"
+issuer: "https://test.example.com"
+grant_types: ["authorization_code"]
+token_endpoint: "/oauth/token"
+authorize_endpoint: "/oauth/authorize"
+jwks_endpoint: "/.well-known/jwks.json"
+access_token_expiration_secs: 3600
+refresh_token_expiration_secs: 86400
+signing_key:
+  algorithm: "RS256"
+  kid: "test-key"
+  private_key: "private.pem"
+  public_key: "public.pem"
+"#;
+
+        let config: OAuth2ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            !config.password_grant_enabled,
+            "Password grant should be disabled by default"
+        );
+    }
+
+    #[test]
+    fn test_oauth2_config_password_grant_explicitly_enabled() {
+        let yaml = r#"
+issuer: "https://test.example.com"
+grant_types: ["authorization_code", "password"]
+token_endpoint: "/oauth/token"
+authorize_endpoint: "/oauth/authorize"
+jwks_endpoint: "/.well-known/jwks.json"
+access_token_expiration_secs: 3600
+refresh_token_expiration_secs: 86400
+password_grant_enabled: true
+signing_key:
+  algorithm: "RS256"
+  kid: "test-key"
+  private_key: "private.pem"
+  public_key: "public.pem"
+"#;
+
+        let config: OAuth2ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            config.password_grant_enabled,
+            "Password grant should be enabled when set to true"
+        );
+    }
+
+    #[test]
+    fn test_oauth2_config_password_grant_explicitly_disabled() {
+        let yaml = r#"
+issuer: "https://test.example.com"
+grant_types: ["authorization_code"]
+token_endpoint: "/oauth/token"
+authorize_endpoint: "/oauth/authorize"
+jwks_endpoint: "/.well-known/jwks.json"
+access_token_expiration_secs: 3600
+refresh_token_expiration_secs: 86400
+password_grant_enabled: false
+signing_key:
+  algorithm: "RS256"
+  kid: "test-key"
+  private_key: "private.pem"
+  public_key: "public.pem"
+"#;
+
+        let config: OAuth2ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            !config.password_grant_enabled,
+            "Password grant should be disabled when explicitly set to false"
+        );
     }
 }

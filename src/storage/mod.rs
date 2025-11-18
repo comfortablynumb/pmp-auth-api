@@ -95,6 +95,43 @@ pub trait StorageBackend: Send + Sync {
     async fn is_token_revoked(&self, token_jti: &str) -> Result<bool, StorageError>;
 
     async fn cleanup_expired_revocations(&self) -> Result<usize, StorageError>;
+
+    // OAuth2 Client operations
+    async fn store_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError>;
+
+    async fn get_oauth2_client(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<OAuth2ClientData>, StorageError>;
+
+    async fn list_oauth2_clients(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<OAuth2ClientData>, StorageError>;
+
+    async fn update_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError>;
+
+    async fn delete_oauth2_client(&self, client_id: &str) -> Result<(), StorageError>;
+
+    // Rate Limiting operations
+    /// Check if rate limit exceeded for a key
+    async fn check_rate_limit(
+        &self,
+        key: &str,
+        max_attempts: u32,
+        window_secs: u64,
+    ) -> Result<bool, StorageError>;
+
+    /// Record a rate limit attempt
+    async fn record_rate_limit_attempt(&self, key: &str) -> Result<(), StorageError>;
 }
 
 /// Authorization code data for OAuth2 flow
@@ -169,6 +206,32 @@ pub enum DeviceCodeStatus {
     Authorized,
     Denied,
     Expired,
+}
+
+/// OAuth2 client registration data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuth2ClientData {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub tenant_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub allowed_scopes: Vec<String>,
+    pub grant_types: Vec<String>,
+    pub client_type: OAuth2ClientType,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub active: bool,
+}
+
+/// OAuth2 client type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum OAuth2ClientType {
+    /// Confidential client (can securely store client secret)
+    Confidential,
+    /// Public client (cannot securely store secrets, e.g., SPAs, mobile apps)
+    Public,
 }
 
 /// Storage errors

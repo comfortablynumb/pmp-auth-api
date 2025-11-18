@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -9,58 +8,21 @@ pub enum UserRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: Uuid,
-    pub email: String,
-    pub username: String,
-    #[serde(skip_serializing)]
-    pub password_hash: String,
-    pub role: UserRole,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RegisterRequest {
-    pub email: String,
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LoginRequest {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // User ID
-    pub email: String,
-    pub role: UserRole,
-    pub exp: usize, // Expiration time
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub token: String,
-    pub user: UserInfo,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserInfo {
-    pub id: Uuid,
-    pub email: String,
-    pub username: String,
-    pub role: UserRole,
-}
-
-impl From<User> for UserInfo {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            role: user.role,
-        }
-    }
+    pub sub: String,    // Subject (user ID)
+    pub email: String,  // User email
+    pub role: UserRole, // User role
+    pub exp: usize,     // Expiration time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>, // Issuer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aud: Option<Vec<String>>, // Audience (client_ids)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>, // Space-separated scopes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>, // Tenant identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azp: Option<String>, // Authorized party (client_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>, // JWT ID
 }

@@ -46,7 +46,7 @@ docker exec -i pmp-auth-db psql -U postgres -d pmp_auth < migrations/001_initial
 
 ### Using PostgreSQL Storage
 
-Update your `config.yaml`:
+Update your `config/config.yaml`:
 
 ```yaml
 # Storage configuration
@@ -168,7 +168,7 @@ psql -U postgres -d pmp_auth -c "SELECT 1;"
 sudo systemctl status postgresql
 
 # Check connection in config.yaml
-cat config.yaml | grep connection_string
+cat config/config.yaml | grep connection_string
 ```
 
 ### Migration Errors

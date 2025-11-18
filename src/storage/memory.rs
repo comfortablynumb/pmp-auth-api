@@ -17,6 +17,8 @@ pub struct MemoryStorage {
     device_codes: Arc<Mutex<HashMap<String, DeviceCodeData>>>,
     user_code_to_device_code: Arc<Mutex<HashMap<String, String>>>,
     revoked_tokens: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
+    oauth2_clients: Arc<Mutex<HashMap<String, OAuth2ClientData>>>,
+    rate_limits: Arc<Mutex<HashMap<String, Vec<DateTime<Utc>>>>>,
 }
 
 impl MemoryStorage {
@@ -30,6 +32,8 @@ impl MemoryStorage {
             device_codes: Arc::new(Mutex::new(HashMap::new())),
             user_code_to_device_code: Arc::new(Mutex::new(HashMap::new())),
             revoked_tokens: Arc::new(Mutex::new(HashMap::new())),
+            oauth2_clients: Arc::new(Mutex::new(HashMap::new())),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -342,6 +346,119 @@ impl StorageBackend for MemoryStorage {
         let removed_count = before_count - revoked.len();
         Ok(removed_count)
     }
+
+    // OAuth2 Client operations
+    async fn store_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError> {
+        let mut clients = self
+            .oauth2_clients
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        if clients.contains_key(client_id) {
+            return Err(StorageError::AlreadyExists);
+        }
+
+        clients.insert(client_id.to_string(), data);
+        Ok(())
+    }
+
+    async fn get_oauth2_client(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<OAuth2ClientData>, StorageError> {
+        let clients = self
+            .oauth2_clients
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        Ok(clients.get(client_id).cloned())
+    }
+
+    async fn list_oauth2_clients(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<OAuth2ClientData>, StorageError> {
+        let clients = self
+            .oauth2_clients
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        Ok(clients
+            .values()
+            .filter(|client| client.tenant_id == tenant_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError> {
+        let mut clients = self
+            .oauth2_clients
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        if !clients.contains_key(client_id) {
+            return Err(StorageError::NotFound);
+        }
+
+        clients.insert(client_id.to_string(), data);
+        Ok(())
+    }
+
+    async fn delete_oauth2_client(&self, client_id: &str) -> Result<(), StorageError> {
+        let mut clients = self
+            .oauth2_clients
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        clients
+            .remove(client_id)
+            .ok_or(StorageError::NotFound)
+            .map(|_| ())
+    }
+
+    // Rate Limiting operations
+    async fn check_rate_limit(
+        &self,
+        key: &str,
+        max_attempts: u32,
+        window_secs: u64,
+    ) -> Result<bool, StorageError> {
+        let mut rate_limits = self
+            .rate_limits
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let now = Utc::now();
+        let window_start = now - chrono::Duration::seconds(window_secs as i64);
+
+        // Get attempts for this key
+        let attempts = rate_limits.entry(key.to_string()).or_insert_with(Vec::new);
+
+        // Remove old attempts outside the window
+        attempts.retain(|&attempt_time| attempt_time > window_start);
+
+        // Check if limit exceeded
+        Ok(attempts.len() >= max_attempts as usize)
+    }
+
+    async fn record_rate_limit_attempt(&self, key: &str) -> Result<(), StorageError> {
+        let mut rate_limits = self
+            .rate_limits
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let attempts = rate_limits.entry(key.to_string()).or_insert_with(Vec::new);
+        attempts.push(Utc::now());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -522,5 +639,92 @@ mod tests {
         // Check valid token still there
         let is_revoked = storage.is_token_revoked(valid_jti).await.unwrap();
         assert!(is_revoked);
+    }
+
+    // Rate Limiting Tests
+
+    #[tokio::test]
+    async fn test_rate_limit_not_exceeded_initially() {
+        let storage = MemoryStorage::new();
+        let key = "test:user1";
+
+        let exceeded = storage.check_rate_limit(key, 5, 60).await.unwrap();
+        assert!(!exceeded, "Rate limit should not be exceeded initially");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_records_attempts() {
+        let storage = MemoryStorage::new();
+        let key = "test:user2";
+
+        // Record 3 attempts
+        for _ in 0..3 {
+            storage.record_rate_limit_attempt(key).await.unwrap();
+        }
+
+        let exceeded = storage.check_rate_limit(key, 5, 60).await.unwrap();
+        assert!(
+            !exceeded,
+            "Should not exceed limit with 3 attempts (limit is 5)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_exceeded_after_max_attempts() {
+        let storage = MemoryStorage::new();
+        let key = "test:user3";
+        let max_attempts = 5;
+
+        // Record max attempts
+        for _ in 0..max_attempts {
+            storage.record_rate_limit_attempt(key).await.unwrap();
+        }
+
+        let exceeded = storage
+            .check_rate_limit(key, max_attempts, 60)
+            .await
+            .unwrap();
+        assert!(
+            exceeded,
+            "Rate limit should be exceeded after {} attempts",
+            max_attempts
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_window_expiration() {
+        let storage = MemoryStorage::new();
+        let key = "test:user4";
+
+        // This test verifies that rate limit checks work within the time window
+        // Record an attempt
+        storage.record_rate_limit_attempt(key).await.unwrap();
+
+        // Check with a very short window (1 second)
+        // The attempt was just recorded (< 1 second ago), so it should count
+        let exceeded = storage.check_rate_limit(key, 1, 1).await.unwrap();
+        assert!(exceeded, "Recent attempt should be within 1-second window and exceed limit of 1");
+
+        // Check with a longer window - should still be counted
+        let exceeded = storage.check_rate_limit(key, 5, 60).await.unwrap();
+        assert!(!exceeded, "With higher limit of 5, should not be exceeded");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_different_keys_independent() {
+        let storage = MemoryStorage::new();
+        let key1 = "test:user5";
+        let key2 = "test:user6";
+
+        // Max out key1
+        for _ in 0..5 {
+            storage.record_rate_limit_attempt(key1).await.unwrap();
+        }
+
+        let exceeded1 = storage.check_rate_limit(key1, 5, 60).await.unwrap();
+        let exceeded2 = storage.check_rate_limit(key2, 5, 60).await.unwrap();
+
+        assert!(exceeded1, "Key1 should be rate limited");
+        assert!(!exceeded2, "Key2 should not be rate limited");
     }
 }

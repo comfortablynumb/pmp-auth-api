@@ -1,16 +1,17 @@
 // OpenID Connect Provider Implementation
 // This module implements the OIDC provider functionality on top of OAuth2
 
-use crate::models::{AppConfig, OAuth2ServerConfig, OidcProviderConfig};
+use crate::auth::identity_backend::create_identity_backend;
+use crate::models::{Claims, OAuth2ServerConfig, OidcProviderConfig};
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use chrono::Utc;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Extended claims for OpenID Connect ID tokens
 #[allow(dead_code)]
@@ -59,12 +60,12 @@ pub struct UserinfoResponse {
 /// OpenID Connect Discovery Endpoint
 /// GET /api/v1/tenant/{tenant_id}/.well-known/openid-configuration
 pub async fn oidc_discovery(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     debug!("OIDC discovery request for tenant '{}'", tenant_id);
 
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -90,33 +91,77 @@ pub async fn oidc_discovery(
     let base_url = format!("/api/v1/tenant/{}", tenant_id);
 
     Ok(Json(json!({
+        // Standard OIDC Discovery metadata (RFC 8414)
         "issuer": oidc_config.issuer,
         "authorization_endpoint": format!("{}{}", base_url, oauth2_config.authorize_endpoint),
         "token_endpoint": format!("{}{}", base_url, oauth2_config.token_endpoint),
         "userinfo_endpoint": format!("{}{}", base_url, oidc_config.userinfo_endpoint),
         "jwks_uri": format!("{}{}", base_url, oauth2_config.jwks_endpoint),
+
+        // Token endpoints
+        "revocation_endpoint": format!("{}/oauth/revoke", base_url),
+        "introspection_endpoint": format!("{}/oauth/introspect", base_url),
+
+        // Device authorization endpoint (RFC 8628)
+        "device_authorization_endpoint": format!("{}/oauth/device/authorize", base_url),
+
+        // Dynamic client registration (RFC 7591) - if supported
+        // "registration_endpoint": format!("{}/oauth/register", base_url),
+
+        // Session management - if supported
+        // "end_session_endpoint": format!("{}/oauth/logout", base_url),
+
+        // Supported features
         "scopes_supported": oidc_config.scopes_supported,
-        "response_types_supported": ["code", "id_token", "token id_token"],
+        "response_types_supported": ["code", "id_token", "token id_token", "code id_token", "code token", "code token id_token"],
+        "response_modes_supported": ["query", "fragment", "form_post"],
         "grant_types_supported": oauth2_config.grant_types,
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": [oauth2_config.signing_key.algorithm],
+
+        // Token signing and encryption
+        "id_token_signing_alg_values_supported": [&oauth2_config.signing_key.algorithm],
+        "userinfo_signing_alg_values_supported": [&oauth2_config.signing_key.algorithm],
+        "id_token_encryption_alg_values_supported": [],
+        "id_token_encryption_enc_values_supported": [],
+
+        // Claims
         "claims_supported": oidc_config.claims_supported,
-        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "claims_parameter_supported": false,
+
+        // Authentication
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
+
+        // PKCE (RFC 7636)
         "code_challenge_methods_supported": ["S256", "plain"],
+
+        // Request object support (RFC 9101)
+        "request_parameter_supported": false,
+        "request_uri_parameter_supported": false,
+        "require_request_uri_registration": false,
+        "request_object_signing_alg_values_supported": [],
+
+        // ACR (Authentication Context Class Reference)
+        "acr_values_supported": [],
+
+        // Additional metadata
+        "service_documentation": "https://github.com/comfortablynumb/pmp-auth-api",
+        "ui_locales_supported": ["en-US"],
+        "op_policy_uri": format!("{}/policy", base_url),
+        "op_tos_uri": format!("{}/terms", base_url),
     })))
 }
 
 /// OpenID Connect Userinfo Endpoint
 /// GET /api/v1/tenant/{tenant_id}/oauth/userinfo
 pub async fn oidc_userinfo(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<UserinfoResponse>, (StatusCode, Json<serde_json::Value>)> {
     debug!("OIDC userinfo request for tenant '{}'", tenant_id);
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -142,38 +187,118 @@ pub async fn oidc_userinfo(
             )
         })?;
 
-    let _token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
+    let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "invalid_token_format" })),
         )
     })?;
 
-    // TODO: Validate the access token
-    // For now, we'll decode it without validation (INSECURE - for demonstration only)
+    // Get OAuth2 config for token validation
+    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "oauth2_not_enabled" })),
+        )
+    })?;
 
-    // In a real implementation:
-    // 1. Validate the JWT signature
-    // 2. Check expiration
-    // 3. Verify issuer and audience
-    // 4. Look up additional user claims from identity backend
+    // Load public key for token validation
+    let public_key_pem = load_key_pem(&oauth2_config.signing_key.public_key).map_err(|e| {
+        warn!("Failed to load public key: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "server_error", "error_description": "Failed to load public key" })),
+        )
+    })?;
 
-    // Mock user info for demonstration
-    let userinfo = UserinfoResponse {
-        sub: "mock-user-id".to_string(),
-        name: Some("Mock User".to_string()),
-        email: Some("user@example.com".to_string()),
-        email_verified: Some(true),
-        picture: None,
-        preferred_username: Some("mockuser".to_string()),
-        role: Some("user".to_string()),
+    // Validate JWT signature and decode claims
+    let algorithm = match oauth2_config.signing_key.algorithm.as_str() {
+        "RS256" => Algorithm::RS256,
+        "ES256" => Algorithm::ES256,
+        _ => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    json!({ "error": "server_error", "error_description": "Unsupported algorithm" }),
+                ),
+            ));
+        }
     };
 
+    let decoding_key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
+        warn!("Failed to parse public key: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "server_error", "error_description": "Invalid public key format" })),
+        )
+    })?;
+
+    let mut validation = Validation::new(algorithm);
+    validation.validate_exp = true;
+    validation.validate_nbf = false;
+    validation.set_required_spec_claims(&["sub", "exp"]);
+
+    // Decode and validate the token
+    let token_data = decode::<Claims>(token, &decoding_key, &validation).map_err(|e| {
+        warn!("Token validation failed: {}", e);
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "invalid_token",
+                "error_description": "Token validation failed"
+            })),
+        )
+    })?;
+
+    info!(
+        "Token validated successfully for user: {}",
+        token_data.claims.sub
+    );
+
+    // Retrieve user information from identity backend
+    let backend = create_identity_backend(&tenant.identity_backend);
+    let user = backend
+        .get_user_by_id(&token_data.claims.sub)
+        .map_err(|e| {
+            warn!("Failed to retrieve user from backend: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "server_error",
+                    "error_description": "Failed to retrieve user information"
+                })),
+            )
+        })?;
+
+    // Build userinfo response with real user data
+    let userinfo = UserinfoResponse {
+        sub: user.id,
+        name: user.name,
+        email: Some(user.email.clone()),
+        email_verified: Some(true), // Could be retrieved from user attributes
+        picture: user.picture,
+        preferred_username: Some(user.email),
+        role: Some(format!("{:?}", user.role)),
+    };
+
+    debug!("Returning userinfo for user: {}", userinfo.sub);
     Ok(Json(userinfo))
 }
 
+/// Load a key from either a file path or inline PEM
+fn load_key_pem(key_config: &str) -> Result<String, String> {
+    // Check if it's a file path or inline PEM
+    if key_config.starts_with("-----BEGIN") {
+        // Inline PEM
+        Ok(key_config.to_string())
+    } else {
+        // File path - try to read it
+        std::fs::read_to_string(key_config)
+            .map_err(|e| format!("Failed to read key file '{}': {}", key_config, e))
+    }
+}
+
 /// Generate an OpenID Connect ID token
-#[allow(dead_code)]
 pub fn generate_id_token(
     user_id: &str,
     email: &str,
@@ -214,12 +339,20 @@ pub fn generate_id_token(
         }
     };
 
-    // TODO: Load private key from file or environment
-    let encoding_key = EncodingKey::from_rsa_pem(b"dummy-key").map_err(|e| {
-        warn!("Failed to load signing key: {}", e);
+    // Load private key from tenant configuration
+    let private_key_pem = load_key_pem(&oauth2_config.signing_key.private_key).map_err(|e| {
+        warn!("Failed to load private key: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "server_error", "error_description": "Failed to load signing key" })),
+        )
+    })?;
+
+    let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes()).map_err(|e| {
+        warn!("Failed to parse private key: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "server_error", "error_description": "Invalid signing key format" })),
         )
     })?;
 

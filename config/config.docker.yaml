@@ -43,7 +43,8 @@ tenants:
         id_token_expiration_secs: 3600
 
     # LDAP backend for user authentication
-    ldap_backend:
+    identity_backend:
+      type: ldap
       url: "ldap://openldap:389"
       bind_dn: "cn=admin,dc=example,dc=com"
       bind_password: "admin_password"
@@ -122,7 +123,8 @@ tenants:
         id_token_expiration_secs: 3600
 
     # Mock backend for testing
-    mock_backend:
+    identity_backend:
+      type: mock
       users:
         - id: "user1"
           username: "testuser"
@@ -139,19 +141,19 @@ tenants:
 
 # Global settings
 server:
-  host: "0.0.0.0"
+  host: "${env:SERVER_HOST:0.0.0.0}"
   port: 3000
   workers: 4
 
 # Database (PostgreSQL)
 database:
-  url: "postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth"
+  url: "${env:DATABASE_URL:postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth}"
   max_connections: 10
   min_connections: 2
 
 # Redis
 redis:
-  url: "redis://redis:6379"
+  url: "${env:REDIS_URL:redis://redis:6379}"
   pool_size: 10
 
 # Rate limiting

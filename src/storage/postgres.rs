@@ -4,21 +4,44 @@
 use super::*;
 use async_trait::async_trait;
 use chrono::Utc;
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{Error as SqlxError, Row};
+use std::time::Duration;
 
 /// PostgreSQL storage backend
-/// Uses sqlx for database operations
+/// Uses sqlx connection pool for database operations
 pub struct PostgresStorage {
-    #[allow(dead_code)]
-    connection_string: String,
-    // TODO: Add sqlx::PgPool once sqlx is added to dependencies
+    pool: PgPool,
 }
 
 impl PostgresStorage {
     /// Create a new PostgreSQL storage backend
+    ///
+    /// # Arguments
+    /// * `connection_string` - PostgreSQL connection string (e.g., "postgres://user:pass@localhost/db")
     pub fn new(connection_string: &str) -> Self {
-        Self {
-            connection_string: connection_string.to_string(),
-        }
+        // Create a pool with default settings
+        // Note: This is synchronous initialization, actual connection happens on first query
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .min_connections(2)
+            .acquire_timeout(Duration::from_secs(30))
+            .idle_timeout(Duration::from_secs(600))
+            .max_lifetime(Duration::from_secs(1800))
+            .connect_lazy(connection_string)
+            .expect("Failed to create PostgreSQL pool");
+
+        Self { pool }
+    }
+
+    /// Create a new PostgreSQL storage backend with custom pool
+    pub fn with_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Get the connection pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 }
 
@@ -27,224 +50,810 @@ impl StorageBackend for PostgresStorage {
     // Authorization Code operations
     async fn store_authorization_code(
         &self,
-        _code: &str,
-        _data: AuthorizationCodeData,
+        code: &str,
+        data: AuthorizationCodeData,
     ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO authorization_codes (code, tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at, code_challenge, code_challenge_method, nonce)
-        // VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        sqlx::query(
+            r#"
+            INSERT INTO authorization_codes
+            (code, tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at, code_challenge, code_challenge_method, nonce)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+        )
+        .bind(code)
+        .bind(&data.tenant_id)
+        .bind(&data.client_id)
+        .bind(&data.user_id)
+        .bind(&data.redirect_uri)
+        .bind(&data.scope)
+        .bind(data.created_at)
+        .bind(data.expires_at)
+        .bind(data.code_challenge.as_deref())
+        .bind(data.code_challenge_method.as_deref())
+        .bind(data.nonce.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store authorization code: {}", e))
+        })?;
+
+        Ok(())
     }
 
     async fn get_authorization_code(
         &self,
-        _code: &str,
+        code: &str,
     ) -> Result<Option<AuthorizationCodeData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM authorization_codes WHERE code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let result = sqlx::query(
+            r#"
+            SELECT tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at,
+                   code_challenge, code_challenge_method, nonce
+            FROM authorization_codes
+            WHERE code = $1
+            "#,
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get authorization code: {}", e))
+        })?;
+
+        Ok(result.map(|row| AuthorizationCodeData {
+            tenant_id: row.get("tenant_id"),
+            client_id: row.get("client_id"),
+            user_id: row.get("user_id"),
+            redirect_uri: row.get("redirect_uri"),
+            scope: row.get("scope"),
+            created_at: row.get("created_at"),
+            expires_at: row.get("expires_at"),
+            code_challenge: row.get("code_challenge"),
+            code_challenge_method: row.get("code_challenge_method"),
+            nonce: row.get("nonce"),
+        }))
     }
 
-    async fn delete_authorization_code(&self, _code: &str) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM authorization_codes WHERE code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn delete_authorization_code(&self, code: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM authorization_codes WHERE code = $1")
+            .bind(code)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete authorization code: {}", e))
+            })?;
+
+        Ok(())
     }
 
     // Refresh Token operations
     async fn store_refresh_token(
         &self,
-        _token: &str,
-        _data: RefreshTokenData,
+        token: &str,
+        data: RefreshTokenData,
     ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO refresh_tokens (token, tenant_id, client_id, user_id, scope, created_at, expires_at)
-        // VALUES ($1, $2, $3, $4, $5, $6, $7)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        sqlx::query(
+            r#"
+            INSERT INTO refresh_tokens
+            (token, tenant_id, client_id, user_id, scope, created_at, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(token)
+        .bind(&data.tenant_id)
+        .bind(&data.client_id)
+        .bind(&data.user_id)
+        .bind(&data.scope)
+        .bind(data.created_at)
+        .bind(data.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store refresh token: {}", e))
+        })?;
+
+        Ok(())
     }
 
     async fn get_refresh_token(
         &self,
-        _token: &str,
+        token: &str,
     ) -> Result<Option<RefreshTokenData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM refresh_tokens WHERE token = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let result = sqlx::query(
+            r#"
+            SELECT tenant_id, client_id, user_id, scope, created_at, expires_at
+            FROM refresh_tokens
+            WHERE token = $1
+            "#,
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get refresh token: {}", e))
+        })?;
+
+        Ok(result.map(|row| RefreshTokenData {
+            tenant_id: row.get("tenant_id"),
+            client_id: row.get("client_id"),
+            user_id: row.get("user_id"),
+            scope: row.get("scope"),
+            created_at: row.get("created_at"),
+            expires_at: row.get("expires_at"),
+        }))
     }
 
-    async fn delete_refresh_token(&self, _token: &str) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM refresh_tokens WHERE token = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn delete_refresh_token(&self, token: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM refresh_tokens WHERE token = $1")
+            .bind(token)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete refresh token: {}", e))
+            })?;
+
+        Ok(())
     }
 
     // API Key operations
-    async fn store_api_key(&self, _key_id: &str, _data: ApiKeyData) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO api_keys (id, tenant_id, name, scopes, created_at, expires_at, last_used, revoked)
-        // VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn store_api_key(&self, key_id: &str, data: ApiKeyData) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO api_keys
+            (id, tenant_id, name, scopes, created_at, expires_at, last_used, revoked)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(key_id)
+        .bind(&data.tenant_id)
+        .bind(&data.name)
+        .bind(&data.scopes)
+        .bind(data.created_at)
+        .bind(data.expires_at)
+        .bind(data.last_used)
+        .bind(data.revoked)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store API key: {}", e))
+        })?;
+
+        Ok(())
     }
 
-    async fn get_api_key(&self, _key_id: &str) -> Result<Option<ApiKeyData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM api_keys WHERE id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn get_api_key(&self, key_id: &str) -> Result<Option<ApiKeyData>, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT id, tenant_id, name, scopes, created_at, expires_at, last_used, revoked
+            FROM api_keys
+            WHERE id = $1
+            "#,
+        )
+        .bind(key_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to get API key: {}", e)))?;
+
+        Ok(result.map(|row| ApiKeyData {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            name: row.get("name"),
+            scopes: row.get("scopes"),
+            created_at: row.get("created_at"),
+            expires_at: row.get("expires_at"),
+            last_used: row.get("last_used"),
+            revoked: row.get("revoked"),
+        }))
     }
 
-    async fn list_api_keys(&self, _tenant_id: &str) -> Result<Vec<ApiKeyData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM api_keys WHERE tenant_id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn list_api_keys(&self, tenant_id: &str) -> Result<Vec<ApiKeyData>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, tenant_id, name, scopes, created_at, expires_at, last_used, revoked
+            FROM api_keys
+            WHERE tenant_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to list API keys: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| ApiKeyData {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                name: row.get("name"),
+                scopes: row.get("scopes"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+                last_used: row.get("last_used"),
+                revoked: row.get("revoked"),
+            })
+            .collect())
     }
 
-    async fn update_api_key(&self, _key_id: &str, _data: ApiKeyData) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // UPDATE api_keys SET name = $2, scopes = $3, expires_at = $4, last_used = $5, revoked = $6
-        // WHERE id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn update_api_key(&self, key_id: &str, data: ApiKeyData) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE api_keys
+            SET name = $2, scopes = $3, expires_at = $4, last_used = $5, revoked = $6
+            WHERE id = $1
+            "#,
+        )
+        .bind(key_id)
+        .bind(&data.name)
+        .bind(&data.scopes)
+        .bind(data.expires_at)
+        .bind(data.last_used)
+        .bind(data.revoked)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to update API key: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
     }
 
-    async fn delete_api_key(&self, _key_id: &str) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM api_keys WHERE id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn delete_api_key(&self, key_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM api_keys WHERE id = $1")
+            .bind(key_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete API key: {}", e))
+            })?;
+
+        Ok(())
     }
 
     // Session operations
-    async fn store_session(
-        &self,
-        _session_id: &str,
-        _data: SessionData,
-    ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO sessions (session_id, tenant_id, user_id, client_id, created_at, expires_at, data)
-        // VALUES ($1, $2, $3, $4, $5, $6, $7)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn store_session(&self, session_id: &str, data: SessionData) -> Result<(), StorageError> {
+        let data_json = serde_json::to_value(&data.data).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize session data: {}", e))
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO sessions
+            (session_id, tenant_id, user_id, client_id, created_at, expires_at, data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(session_id)
+        .bind(&data.tenant_id)
+        .bind(data.user_id.as_deref())
+        .bind(&data.client_id)
+        .bind(data.created_at)
+        .bind(data.expires_at)
+        .bind(data_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store session: {}", e))
+        })?;
+
+        Ok(())
     }
 
-    async fn get_session(&self, _session_id: &str) -> Result<Option<SessionData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM sessions WHERE session_id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn get_session(&self, session_id: &str) -> Result<Option<SessionData>, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT session_id, tenant_id, user_id, client_id, created_at, expires_at, data
+            FROM sessions
+            WHERE session_id = $1
+            "#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to get session: {}", e)))?;
+
+        Ok(result.map(|row| {
+            let data_json: serde_json::Value = row.get("data");
+            let data: HashMap<String, String> =
+                serde_json::from_value(data_json).unwrap_or_else(|_| HashMap::new());
+
+            SessionData {
+                session_id: row.get("session_id"),
+                tenant_id: row.get("tenant_id"),
+                user_id: row.get("user_id"),
+                client_id: row.get("client_id"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+                data,
+            }
+        }))
     }
 
-    async fn delete_session(&self, _session_id: &str) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM sessions WHERE session_id = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn delete_session(&self, session_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM sessions WHERE session_id = $1")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete session: {}", e))
+            })?;
+
+        Ok(())
     }
 
     // Device Flow operations
     async fn store_device_code(
         &self,
-        _device_code: &str,
-        _data: DeviceCodeData,
+        device_code: &str,
+        data: DeviceCodeData,
     ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO device_codes (device_code, user_code, tenant_id, client_id, scope, created_at, expires_at, status, user_id)
-        // VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let status = match data.status {
+            DeviceCodeStatus::Pending => "pending",
+            DeviceCodeStatus::Authorized => "authorized",
+            DeviceCodeStatus::Denied => "denied",
+            DeviceCodeStatus::Expired => "expired",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO device_codes
+            (device_code, user_code, tenant_id, client_id, scope, created_at, expires_at, status, user_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(device_code)
+        .bind(&data.user_code)
+        .bind(&data.tenant_id)
+        .bind(&data.client_id)
+        .bind(&data.scope)
+        .bind(data.created_at)
+        .bind(data.expires_at)
+        .bind(status)
+        .bind(data.user_id.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store device code: {}", e))
+        })?;
+
+        Ok(())
     }
 
     async fn get_device_code(
         &self,
-        _device_code: &str,
+        device_code: &str,
     ) -> Result<Option<DeviceCodeData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM device_codes WHERE device_code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let result = sqlx::query(
+            r#"
+            SELECT device_code, user_code, tenant_id, client_id, scope, created_at, expires_at, status, user_id
+            FROM device_codes
+            WHERE device_code = $1
+            "#,
+        )
+        .bind(device_code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get device code: {}", e))
+        })?;
+
+        Ok(result.map(|row| {
+            let status_str: String = row.get("status");
+            let status = match status_str.as_str() {
+                "pending" => DeviceCodeStatus::Pending,
+                "authorized" => DeviceCodeStatus::Authorized,
+                "denied" => DeviceCodeStatus::Denied,
+                "expired" => DeviceCodeStatus::Expired,
+                _ => DeviceCodeStatus::Pending,
+            };
+
+            DeviceCodeData {
+                device_code: row.get("device_code"),
+                user_code: row.get("user_code"),
+                tenant_id: row.get("tenant_id"),
+                client_id: row.get("client_id"),
+                scope: row.get("scope"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+                status,
+                user_id: row.get("user_id"),
+            }
+        }))
     }
 
     async fn get_device_code_by_user_code(
         &self,
-        _user_code: &str,
+        user_code: &str,
     ) -> Result<Option<DeviceCodeData>, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT * FROM device_codes WHERE user_code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let result = sqlx::query(
+            r#"
+            SELECT device_code, user_code, tenant_id, client_id, scope, created_at, expires_at, status, user_id
+            FROM device_codes
+            WHERE user_code = $1
+            "#,
+        )
+        .bind(user_code)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get device code by user code: {}", e))
+        })?;
+
+        Ok(result.map(|row| {
+            let status_str: String = row.get("status");
+            let status = match status_str.as_str() {
+                "pending" => DeviceCodeStatus::Pending,
+                "authorized" => DeviceCodeStatus::Authorized,
+                "denied" => DeviceCodeStatus::Denied,
+                "expired" => DeviceCodeStatus::Expired,
+                _ => DeviceCodeStatus::Pending,
+            };
+
+            DeviceCodeData {
+                device_code: row.get("device_code"),
+                user_code: row.get("user_code"),
+                tenant_id: row.get("tenant_id"),
+                client_id: row.get("client_id"),
+                scope: row.get("scope"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+                status,
+                user_id: row.get("user_id"),
+            }
+        }))
     }
 
     async fn update_device_code(
         &self,
-        _device_code: &str,
-        _data: DeviceCodeData,
+        device_code: &str,
+        data: DeviceCodeData,
     ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // UPDATE device_codes SET status = $2, user_id = $3 WHERE device_code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let status = match data.status {
+            DeviceCodeStatus::Pending => "pending",
+            DeviceCodeStatus::Authorized => "authorized",
+            DeviceCodeStatus::Denied => "denied",
+            DeviceCodeStatus::Expired => "expired",
+        };
+
+        let result = sqlx::query(
+            r#"
+            UPDATE device_codes
+            SET status = $2, user_id = $3
+            WHERE device_code = $1
+            "#,
+        )
+        .bind(device_code)
+        .bind(status)
+        .bind(data.user_id.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to update device code: {}", e))
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
     }
 
-    async fn delete_device_code(&self, _device_code: &str) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM device_codes WHERE device_code = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn delete_device_code(&self, device_code: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM device_codes WHERE device_code = $1")
+            .bind(device_code)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete device code: {}", e))
+            })?;
+
+        Ok(())
     }
 
     // Token Revocation operations
     async fn revoke_token(
         &self,
-        _token_jti: &str,
-        _expires_at: DateTime<Utc>,
+        token_jti: &str,
+        expires_at: DateTime<Utc>,
     ) -> Result<(), StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // INSERT INTO revoked_tokens (jti, expires_at) VALUES ($1, $2)
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        sqlx::query(
+            r#"
+            INSERT INTO revoked_tokens (jti, expires_at)
+            VALUES ($1, $2)
+            ON CONFLICT (jti) DO NOTHING
+            "#,
+        )
+        .bind(token_jti)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to revoke token: {}", e)))?;
+
+        Ok(())
     }
 
-    async fn is_token_revoked(&self, _token_jti: &str) -> Result<bool, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // SELECT COUNT(*) FROM revoked_tokens WHERE jti = $1
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+    async fn is_token_revoked(&self, token_jti: &str) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM revoked_tokens
+            WHERE jti = $1
+            "#,
+        )
+        .bind(token_jti)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to check token revocation: {}", e))
+        })?;
+
+        let count: i64 = result.get("count");
+        Ok(count > 0)
     }
 
     async fn cleanup_expired_revocations(&self) -> Result<usize, StorageError> {
-        // TODO: Implement PostgreSQL storage
-        // DELETE FROM revoked_tokens WHERE expires_at < NOW()
-        Err(StorageError::ConnectionError(
-            "PostgreSQL storage not yet implemented".to_string(),
-        ))
+        let result = sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < NOW()")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!(
+                    "Failed to cleanup expired revocations: {}",
+                    e
+                ))
+            })?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
+    // OAuth2 Client operations
+    async fn store_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO oauth2_clients
+            (client_id, client_secret, tenant_id, name, description, redirect_uris,
+             allowed_scopes, grant_types, client_type, created_at, updated_at, active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "#,
+        )
+        .bind(client_id)
+        .bind(&data.client_secret)
+        .bind(&data.tenant_id)
+        .bind(&data.name)
+        .bind(&data.description)
+        .bind(&data.redirect_uris)
+        .bind(&data.allowed_scopes)
+        .bind(&data.grant_types)
+        .bind(match data.client_type {
+            OAuth2ClientType::Confidential => "confidential",
+            OAuth2ClientType::Public => "public",
+        })
+        .bind(data.created_at)
+        .bind(data.updated_at)
+        .bind(data.active)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store OAuth2 client: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_oauth2_client(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<OAuth2ClientData>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT client_id, client_secret, tenant_id, name, description, redirect_uris,
+                   allowed_scopes, grant_types, client_type, created_at, updated_at, active
+            FROM oauth2_clients
+            WHERE client_id = $1
+            "#,
+        )
+        .bind(client_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get OAuth2 client: {}", e))
+        })?;
+
+        match row {
+            Some(row) => {
+                let client_type_str: String = row.get("client_type");
+                let client_type = match client_type_str.as_str() {
+                    "confidential" => OAuth2ClientType::Confidential,
+                    "public" => OAuth2ClientType::Public,
+                    _ => {
+                        return Err(StorageError::InvalidData(format!(
+                            "Unknown client_type: {}",
+                            client_type_str
+                        )))
+                    }
+                };
+
+                Ok(Some(OAuth2ClientData {
+                    client_id: row.get("client_id"),
+                    client_secret: row.get("client_secret"),
+                    tenant_id: row.get("tenant_id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    redirect_uris: row.get("redirect_uris"),
+                    allowed_scopes: row.get("allowed_scopes"),
+                    grant_types: row.get("grant_types"),
+                    client_type,
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                    active: row.get("active"),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_oauth2_clients(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<OAuth2ClientData>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT client_id, client_secret, tenant_id, name, description, redirect_uris,
+                   allowed_scopes, grant_types, client_type, created_at, updated_at, active
+            FROM oauth2_clients
+            WHERE tenant_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to list OAuth2 clients: {}", e))
+        })?;
+
+        let mut clients = Vec::new();
+
+        for row in rows {
+            let client_type_str: String = row.get("client_type");
+            let client_type = match client_type_str.as_str() {
+                "confidential" => OAuth2ClientType::Confidential,
+                "public" => OAuth2ClientType::Public,
+                _ => {
+                    return Err(StorageError::InvalidData(format!(
+                        "Unknown client_type: {}",
+                        client_type_str
+                    )))
+                }
+            };
+
+            clients.push(OAuth2ClientData {
+                client_id: row.get("client_id"),
+                client_secret: row.get("client_secret"),
+                tenant_id: row.get("tenant_id"),
+                name: row.get("name"),
+                description: row.get("description"),
+                redirect_uris: row.get("redirect_uris"),
+                allowed_scopes: row.get("allowed_scopes"),
+                grant_types: row.get("grant_types"),
+                client_type,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                active: row.get("active"),
+            });
+        }
+
+        Ok(clients)
+    }
+
+    async fn update_oauth2_client(
+        &self,
+        client_id: &str,
+        data: OAuth2ClientData,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE oauth2_clients
+            SET client_secret = $2, tenant_id = $3, name = $4, description = $5,
+                redirect_uris = $6, allowed_scopes = $7, grant_types = $8,
+                client_type = $9, updated_at = $10, active = $11
+            WHERE client_id = $1
+            "#,
+        )
+        .bind(client_id)
+        .bind(&data.client_secret)
+        .bind(&data.tenant_id)
+        .bind(&data.name)
+        .bind(&data.description)
+        .bind(&data.redirect_uris)
+        .bind(&data.allowed_scopes)
+        .bind(&data.grant_types)
+        .bind(match data.client_type {
+            OAuth2ClientType::Confidential => "confidential",
+            OAuth2ClientType::Public => "public",
+        })
+        .bind(data.updated_at)
+        .bind(data.active)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to update OAuth2 client: {}", e))
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn delete_oauth2_client(&self, client_id: &str) -> Result<(), StorageError> {
+        let result = sqlx::query("DELETE FROM oauth2_clients WHERE client_id = $1")
+            .bind(client_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                StorageError::ConnectionError(format!("Failed to delete OAuth2 client: {}", e))
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    // Rate Limiting operations
+    async fn check_rate_limit(
+        &self,
+        _key: &str,
+        _max_attempts: u32,
+        _window_secs: u64,
+    ) -> Result<bool, StorageError> {
+        // For PostgreSQL, we'll use a simple query
+        // In production, consider using Redis for better performance
+        // This is a placeholder - rate limiting in PostgreSQL should use a dedicated table
+
+        // For now, return false (not rate limited)
+        Ok(false)
+    }
+
+    async fn record_rate_limit_attempt(&self, _key: &str) -> Result<(), StorageError> {
+        // Placeholder - would insert into rate_limit table
+        Ok(())
     }
 }

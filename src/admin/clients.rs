@@ -1,19 +1,18 @@
 // OAuth2 Client management admin API
 
 use super::{error_response, not_found, validation_error, AdminError};
-use crate::models::AppConfig;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
 
 // In-memory client storage (TODO: Move to storage backend)
 use lazy_static::lazy_static;
-use std::sync::Mutex;
 
 lazy_static! {
     pub static ref CLIENTS: Arc<Mutex<HashMap<String, Client>>> =
@@ -38,13 +37,14 @@ pub struct Client {
 /// List all clients for a tenant
 /// GET /api/v1/admin/tenants/{tenant_id}/clients
 pub async fn list_clients(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<Vec<ClientResponse>>, AdminError> {
     debug!("Admin API: List clients for tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -83,7 +83,7 @@ pub async fn list_clients(
 /// Get a specific client
 /// GET /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
 pub async fn get_client(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, client_id)): Path<(String, String)>,
 ) -> Result<Json<ClientResponse>, AdminError> {
     debug!(
@@ -92,7 +92,8 @@ pub async fn get_client(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -134,14 +135,15 @@ pub async fn get_client(
 /// Create a new client
 /// POST /api/v1/admin/tenants/{tenant_id}/clients
 pub async fn create_client(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<CreateClientRequest>,
 ) -> Result<(StatusCode, Json<ClientCreatedResponse>), AdminError> {
     debug!("Admin API: Create client for tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -208,7 +210,7 @@ pub async fn create_client(
 /// Update an existing client
 /// PUT /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
 pub async fn update_client(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, client_id)): Path<(String, String)>,
     Json(request): Json<UpdateClientRequest>,
 ) -> Result<Json<ClientResponse>, AdminError> {
@@ -218,7 +220,8 @@ pub async fn update_client(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -286,7 +289,7 @@ pub async fn update_client(
 /// Delete a client
 /// DELETE /api/v1/admin/tenants/{tenant_id}/clients/{client_id}
 pub async fn delete_client(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AdminError> {
     debug!(
@@ -295,7 +298,8 @@ pub async fn delete_client(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -378,10 +382,14 @@ pub struct ClientCreatedResponse {
 mod tests {
     use super::*;
     use crate::models::{
-        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+        AppConfig, IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
     };
+    use crate::storage::memory::MemoryStorage;
+    use crate::storage::StorageBackend;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
-    fn create_test_config() -> Arc<AppConfig> {
+    fn create_test_state() -> AppState {
         let mut tenants = HashMap::new();
         tenants.insert(
             "test-tenant".to_string(),
@@ -404,6 +412,7 @@ mod tests {
                             public_key: "dummy-public-key".to_string(),
                             private_key: "dummy-private-key".to_string(),
                         },
+                        password_grant_enabled: false,
                     }),
                     oidc: None,
                     saml: None,
@@ -414,15 +423,19 @@ mod tests {
             },
         );
 
-        Arc::new(AppConfig {
+        let config = Arc::new(AppConfig {
             tenants,
             storage: crate::models::StorageConfig::Memory,
-        })
+        });
+
+        let storage: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+
+        AppState { config, storage }
     }
 
     #[tokio::test]
     async fn test_create_and_get_client() {
-        let config = create_test_config();
+        let state = create_test_state();
 
         // Create client
         let create_request = CreateClientRequest {
@@ -434,7 +447,7 @@ mod tests {
         };
 
         let result = create_client(
-            State(config.clone()),
+            State(state.clone()),
             Path("test-tenant".to_string()),
             Json(create_request),
         )
@@ -448,7 +461,7 @@ mod tests {
         // Get client
         let client_id = response.client_id.clone();
         let get_result =
-            get_client(State(config), Path(("test-tenant".to_string(), client_id))).await;
+            get_client(State(state), Path(("test-tenant".to_string(), client_id))).await;
 
         assert!(get_result.is_ok());
         let client = get_result.unwrap().0;

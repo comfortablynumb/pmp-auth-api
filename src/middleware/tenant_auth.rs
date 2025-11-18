@@ -1,14 +1,14 @@
 // Temporary stub file - old tenant auth middleware removed
 // Will be replaced with OAuth2/OIDC/SAML token validation
 
-use crate::models::{AppConfig, Claims};
+use crate::models::Claims;
+use crate::AppState;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
-use std::sync::Arc;
 use tracing::warn;
 
 /// Context about the authenticated user and tenant
@@ -23,7 +23,7 @@ pub struct TenantAuthUser {
 /// Stub: Tenant auth middleware (removed - will use OAuth2 token introspection)
 #[allow(dead_code)] // Exported for library use
 pub async fn tenant_auth_middleware(
-    _state: State<Arc<AppConfig>>,
+    _state: State<AppState>,
     _request: Request,
     _next: Next,
 ) -> Result<Response, impl IntoResponse> {

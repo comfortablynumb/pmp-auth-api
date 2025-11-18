@@ -13,7 +13,7 @@ Perfect for:
 ## Prerequisites
 
 1. API is running on `http://localhost:3000`
-2. You have a tenant configured in `config.yaml`
+2. You have a tenant configured in `config/config.yaml`
 3. OAuth2 is enabled for the tenant
 
 ## Step-by-Step Example

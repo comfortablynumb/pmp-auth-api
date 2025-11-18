@@ -1,6 +1,17 @@
-version: '3.8'
-
 services:
+  # Database migrations (runs before app starts)
+  database_migrations:
+    image: amacneil/dbmate:2.28.0
+    container_name: pmp-migrations
+    environment:
+      - DATABASE_URL=postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth?sslmode=disable
+    command: --wait --wait-timeout 60s up
+    volumes:
+      - ./db/migrations:/db/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # Main authentication API
   pmp-auth-api:
     build:
@@ -11,24 +22,21 @@ services:
       - "3000:3000"
     environment:
       - RUST_LOG=debug
-      - CONFIG_PATH=/app/config.yaml
+      - CONFIG_PATH=/app/config/config.yaml
       - DATABASE_URL=postgresql://pmp_user:pmp_password@postgres:5432/pmp_auth
       - REDIS_URL=redis://redis:6379
       - LDAP_URL=ldap://openldap:389
     volumes:
-      - ./config.docker.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro
       - ./keys:/app/keys:ro
       - ./data:/app/data
     depends_on:
-      postgres:
-        condition: service_healthy
+      database_migrations:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       openldap:
         condition: service_started
-    networks:
-      - pmp-network
-    restart: unless-stopped
 
   # PostgreSQL database
   postgres:
@@ -41,15 +49,12 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pmp_user"]
+      test: ["CMD-SHELL", "pg_isready -U pmp_user -d pmp_auth"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # Redis for caching and rate limiting
@@ -59,15 +64,11 @@ services:
     command: redis-server --appendonly yes
     ports:
       - "6379:6379"
-    volumes:
-      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # OpenLDAP for testing LDAP authentication
@@ -83,12 +84,6 @@ services:
     ports:
       - "389:389"
       - "636:636"
-    volumes:
-      - ldap-data:/var/lib/ldap
-      - ldap-config:/etc/ldap/slapd.d
-      - ./docker/ldap/seed.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/seed.ldif:ro
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # phpLDAPadmin for LDAP management UI
@@ -102,8 +97,6 @@ services:
       - "8080:80"
     depends_on:
       - openldap
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # Prometheus for metrics collection
@@ -119,9 +112,6 @@ services:
       - "9090:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # Grafana for metrics visualization
@@ -135,13 +125,10 @@ services:
     ports:
       - "3001:3000"
     volumes:
-      - grafana-data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
-    networks:
-      - pmp-network
     restart: unless-stopped
 
   # Mailhog for testing email (MFA, notifications)
@@ -151,18 +138,4 @@ services:
     ports:
       - "1025:1025"  # SMTP
       - "8025:8025"  # Web UI
-    networks:
-      - pmp-network
     restart: unless-stopped
-
-networks:
-  pmp-network:
-    driver: bridge
-
-volumes:
-  postgres-data:
-  redis-data:
-  ldap-data:
-  ldap-config:
-  prometheus-data:
-  grafana-data:

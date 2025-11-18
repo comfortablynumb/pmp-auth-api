@@ -1,7 +1,8 @@
 // API Key Management Implementation
 // This module handles long-lived JWT tokens for machine-to-machine authentication
 
-use crate::models::{ApiKeyConfig, AppConfig};
+use crate::models::ApiKeyConfig;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -75,7 +76,7 @@ pub struct ApiKeyInfo {
 /// Create a new API key
 /// POST /api/v1/tenant/{tenant_id}/api-keys/create
 pub async fn create_api_key(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -85,7 +86,7 @@ pub async fn create_api_key(
     );
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -174,13 +175,13 @@ pub async fn create_api_key(
 /// List API keys for a tenant
 /// GET /api/v1/tenant/{tenant_id}/api-keys/list
 pub async fn list_api_keys(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<Vec<ApiKeyInfo>>, (StatusCode, Json<serde_json::Value>)> {
     debug!("Listing API keys for tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config.get_tenant(&tenant_id).ok_or_else(|| {
+    state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -208,13 +209,13 @@ pub async fn list_api_keys(
 /// Revoke an API key
 /// POST /api/v1/tenant/{tenant_id}/api-keys/{key_id}/revoke
 pub async fn revoke_api_key(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, key_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     info!("Revoking API key '{}' for tenant '{}'", key_id, tenant_id);
 
     // Verify tenant exists
-    config.get_tenant(&tenant_id).ok_or_else(|| {
+    state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),

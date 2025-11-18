@@ -2,19 +2,19 @@
 
 use super::{error_response, not_found, validation_error, AdminError};
 use crate::auth::password::hash_password;
-use crate::models::{AppConfig, UserRole};
+use crate::models::UserRole;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
 
 // In-memory user storage (TODO: Move to storage backend)
 use lazy_static::lazy_static;
-use std::sync::Mutex;
 
 lazy_static! {
     pub static ref USERS: Arc<Mutex<HashMap<String, User>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -40,13 +40,14 @@ pub struct User {
 /// List all users for a tenant
 /// GET /api/v1/admin/tenants/{tenant_id}/users
 pub async fn list_users(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<Vec<UserResponse>>, AdminError> {
     debug!("Admin API: List users for tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -87,7 +88,7 @@ pub async fn list_users(
 /// Get a specific user
 /// GET /api/v1/admin/tenants/{tenant_id}/users/{user_id}
 pub async fn get_user(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, user_id)): Path<(String, String)>,
 ) -> Result<Json<UserResponse>, AdminError> {
     debug!(
@@ -96,7 +97,8 @@ pub async fn get_user(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -140,14 +142,15 @@ pub async fn get_user(
 /// Create a new user
 /// POST /api/v1/admin/tenants/{tenant_id}/users
 pub async fn create_user(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), AdminError> {
     debug!("Admin API: Create user for tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -242,7 +245,7 @@ pub async fn create_user(
 /// Update an existing user
 /// PUT /api/v1/admin/tenants/{tenant_id}/users/{user_id}
 pub async fn update_user(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, user_id)): Path<(String, String)>,
     Json(request): Json<UpdateUserRequest>,
 ) -> Result<Json<UserResponse>, AdminError> {
@@ -252,7 +255,8 @@ pub async fn update_user(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -335,7 +339,7 @@ pub async fn update_user(
 /// Delete a user
 /// DELETE /api/v1/admin/tenants/{tenant_id}/users/{user_id}
 pub async fn delete_user(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path((tenant_id, user_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AdminError> {
     debug!(
@@ -344,7 +348,8 @@ pub async fn delete_user(
     );
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -419,10 +424,14 @@ pub struct UserResponse {
 mod tests {
     use super::*;
     use crate::models::{
-        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+        AppConfig, IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
     };
+    use crate::storage::memory::MemoryStorage;
+    use crate::storage::StorageBackend;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
-    fn create_test_config() -> Arc<AppConfig> {
+    fn create_test_state() -> AppState {
         let mut tenants = HashMap::new();
         tenants.insert(
             "test-tenant".to_string(),
@@ -445,6 +454,7 @@ mod tests {
                             public_key: "dummy-public-key".to_string(),
                             private_key: "dummy-private-key".to_string(),
                         },
+                        password_grant_enabled: false,
                     }),
                     oidc: None,
                     saml: None,
@@ -455,15 +465,19 @@ mod tests {
             },
         );
 
-        Arc::new(AppConfig {
+        let config = Arc::new(AppConfig {
             tenants,
             storage: crate::models::StorageConfig::Memory,
-        })
+        });
+
+        let storage: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+
+        AppState { config, storage }
     }
 
     #[tokio::test]
     async fn test_create_and_get_user() {
-        let config = create_test_config();
+        let state = create_test_state();
 
         // Create user
         let create_request = CreateUserRequest {
@@ -477,7 +491,7 @@ mod tests {
         };
 
         let result = create_user(
-            State(config.clone()),
+            State(state.clone()),
             Path("test-tenant".to_string()),
             Json(create_request),
         )
@@ -490,7 +504,7 @@ mod tests {
 
         // Get user
         let user_id = response.id.clone();
-        let get_result = get_user(State(config), Path(("test-tenant".to_string(), user_id))).await;
+        let get_result = get_user(State(state), Path(("test-tenant".to_string(), user_id))).await;
 
         assert!(get_result.is_ok());
         let user = get_result.unwrap().0;
@@ -500,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_duplicate_email() {
-        let config = create_test_config();
+        let state = create_test_state();
 
         // Create first user
         let create_request = CreateUserRequest {
@@ -514,7 +528,7 @@ mod tests {
         };
 
         let result = create_user(
-            State(config.clone()),
+            State(state.clone()),
             Path("test-tenant".to_string()),
             Json(create_request.clone()),
         )
@@ -524,7 +538,7 @@ mod tests {
 
         // Try to create duplicate
         let result = create_user(
-            State(config),
+            State(state),
             Path("test-tenant".to_string()),
             Json(create_request),
         )

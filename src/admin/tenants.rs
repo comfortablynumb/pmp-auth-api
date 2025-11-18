@@ -1,21 +1,21 @@
 // Tenant management admin API
 
 use super::{error_response, not_found, validation_error, AdminError};
-use crate::models::AppConfig;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use std::sync::Arc;
 use tracing::{debug, info};
 
 /// List all tenants
 /// GET /api/v1/admin/tenants
 pub async fn list_tenants(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<TenantResponse>>, AdminError> {
     debug!("Admin API: List all tenants");
 
-    let tenants: Vec<TenantResponse> = config
+    let tenants: Vec<TenantResponse> = state
+        .config
         .tenants
         .iter()
         .map(|(id, tenant)| TenantResponse {
@@ -33,12 +33,13 @@ pub async fn list_tenants(
 /// Get a specific tenant
 /// GET /api/v1/admin/tenants/{tenant_id}
 pub async fn get_tenant(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<TenantDetailResponse>, AdminError> {
     debug!("Admin API: Get tenant '{}'", tenant_id);
 
-    let tenant = config
+    let tenant = state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -65,7 +66,7 @@ pub async fn get_tenant(
 /// Create a new tenant
 /// POST /api/v1/admin/tenants
 pub async fn create_tenant(
-    State(_config): State<Arc<AppConfig>>,
+    State(_state): State<AppState>,
     Json(request): Json<CreateTenantRequest>,
 ) -> Result<(StatusCode, Json<TenantResponse>), AdminError> {
     debug!("Admin API: Create tenant '{}'", request.id);
@@ -96,14 +97,15 @@ pub async fn create_tenant(
 /// Update an existing tenant
 /// PUT /api/v1/admin/tenants/{tenant_id}
 pub async fn update_tenant(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<UpdateTenantRequest>,
 ) -> Result<Json<TenantResponse>, AdminError> {
     debug!("Admin API: Update tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    let tenant = config
+    let tenant = state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -124,13 +126,14 @@ pub async fn update_tenant(
 /// Delete a tenant
 /// DELETE /api/v1/admin/tenants/{tenant_id}
 pub async fn delete_tenant(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<StatusCode, AdminError> {
     debug!("Admin API: Delete tenant '{}'", tenant_id);
 
     // Verify tenant exists
-    config
+    state
+        .config
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
@@ -184,11 +187,15 @@ pub struct TenantDetailResponse {
 mod tests {
     use super::*;
     use crate::models::{
-        IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig, Tenant,
+        AppConfig, IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+        Tenant,
     };
+    use crate::storage::memory::MemoryStorage;
+    use crate::storage::StorageBackend;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
-    fn create_test_config() -> Arc<AppConfig> {
+    fn create_test_state() -> AppState {
         let mut tenants = HashMap::new();
         tenants.insert(
             "test-tenant".to_string(),
@@ -211,6 +218,7 @@ mod tests {
                             public_key: "dummy-public-key".to_string(),
                             private_key: "dummy-private-key".to_string(),
                         },
+                        password_grant_enabled: false,
                     }),
                     oidc: None,
                     saml: None,
@@ -221,16 +229,20 @@ mod tests {
             },
         );
 
-        Arc::new(AppConfig {
+        let config = Arc::new(AppConfig {
             tenants,
             storage: crate::models::StorageConfig::Memory,
-        })
+        });
+
+        let storage: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+
+        AppState { config, storage }
     }
 
     #[tokio::test]
     async fn test_list_tenants() {
-        let config = create_test_config();
-        let result = list_tenants(State(config)).await;
+        let state = create_test_state();
+        let result = list_tenants(State(state)).await;
         assert!(result.is_ok());
 
         let tenants = result.unwrap().0;
@@ -240,8 +252,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tenant() {
-        let config = create_test_config();
-        let result = get_tenant(State(config), Path("test-tenant".to_string())).await;
+        let state = create_test_state();
+        let result = get_tenant(State(state), Path("test-tenant".to_string())).await;
         assert!(result.is_ok());
 
         let tenant = result.unwrap().0;
@@ -251,8 +263,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_tenant_not_found() {
-        let config = create_test_config();
-        let result = get_tenant(State(config), Path("nonexistent".to_string())).await;
+        let state = create_test_state();
+        let result = get_tenant(State(state), Path("nonexistent".to_string())).await;
         assert!(result.is_err());
 
         let (status, _) = result.unwrap_err();

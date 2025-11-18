@@ -1,0 +1,23 @@
+feat# Cargo configuration
+
+[build]
+# Build jobs (uses all available cores by default)
+# jobs = 4
+
+[term]
+# Progress bar settings
+# progress.when = "auto"
+# progress.width = 80
+
+# NOTE: Redis dependency warning
+# The redis crate v0.25.4 has a future incompatibility warning related to
+# never type fallback in Rust 2024 edition. This is an issue in the redis
+# crate itself, not our code.
+#
+# Upgrading to redis 0.26+ requires API changes in src/health/checks.rs
+# The query_async method signature changed. When upgrading, update:
+# - Line 180 in src/health/checks.rs
+# - Any other redis async query calls
+#
+# This warning will not affect the build until Rust 2024 edition.
+# Track issue: https://github.com/redis-rs/redis-rs/issues/...

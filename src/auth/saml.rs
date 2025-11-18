@@ -3,27 +3,26 @@
 
 #![allow(dead_code)]
 
-use crate::models::AppConfig;
+use crate::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// SAML Metadata request
 /// GET /api/v1/tenant/{tenant_id}/saml/metadata
 pub async fn saml_metadata(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     debug!("Serving SAML metadata for tenant '{}'", tenant_id);
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),
@@ -53,7 +52,7 @@ pub async fn saml_metadata(
 /// SAML SSO endpoint (HTTP-POST binding)
 /// POST /api/v1/tenant/{tenant_id}/saml/sso
 pub async fn saml_sso_post(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     body: String,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
@@ -63,7 +62,7 @@ pub async fn saml_sso_post(
     );
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),
@@ -111,7 +110,7 @@ pub async fn saml_sso_post(
 /// SAML SSO endpoint (HTTP-Redirect binding)
 /// GET /api/v1/tenant/{tenant_id}/saml/sso
 pub async fn saml_sso_redirect(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Query(params): Query<SamlRedirectParams>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
@@ -121,7 +120,7 @@ pub async fn saml_sso_redirect(
     );
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),
@@ -164,14 +163,14 @@ pub async fn saml_sso_redirect(
 /// SAML Single Logout endpoint
 /// POST /api/v1/tenant/{tenant_id}/saml/slo
 pub async fn saml_slo(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     body: String,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     info!("Processing SAML SLO request for tenant '{}'", tenant_id);
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),

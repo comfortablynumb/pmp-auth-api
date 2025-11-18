@@ -1,93 +1,17 @@
-// Temporary stub file - old local auth handlers removed
-// Will be replaced with OAuth2/OIDC/SAML provider endpoints
+// Tenant authentication handlers
 
-use crate::models::AppConfig;
-use axum::extract::{Path, Query, State};
+use crate::AppState;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::Redirect;
 use axum::Json;
-use serde::Deserialize;
 use serde_json::json;
-use std::sync::Arc;
-use tracing::warn;
-
-/// Stub: Register endpoint (will be removed - no local auth)
-pub async fn register(
-    _state: State<Arc<AppConfig>>,
-    _path: Path<(String, String)>,
-    _json: Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    warn!("Legacy register endpoint called - not implemented in OAuth2/OIDC/SAML architecture");
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(
-            json!({ "error": "Local authentication removed. Use OAuth2/OIDC/SAML identity providers." }),
-        ),
-    ))
-}
-
-/// Stub: Login endpoint (will be removed - no local auth)
-pub async fn login(
-    _state: State<Arc<AppConfig>>,
-    _path: Path<(String, String)>,
-    _json: Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    warn!("Legacy login endpoint called - not implemented in OAuth2/OIDC/SAML architecture");
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(
-            json!({ "error": "Local authentication removed. Use OAuth2/OIDC/SAML identity providers." }),
-        ),
-    ))
-}
-
-/// Stub: OAuth2 login (old client flow - will be replaced with server flow)
-pub async fn oauth2_login(
-    _state: State<Arc<AppConfig>>,
-    _path: Path<(String, String)>,
-) -> Result<Redirect, (StatusCode, Json<serde_json::Value>)> {
-    warn!(
-        "Legacy OAuth2 login endpoint called - will be replaced with OAuth2 authorization server"
-    );
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(
-            json!({ "error": "OAuth2 client flow removed. Use /oauth/authorize for OAuth2 authorization server." }),
-        ),
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OAuth2CallbackQuery {
-    #[allow(dead_code)]
-    code: String,
-    #[allow(dead_code)]
-    state: String,
-}
-
-/// Stub: OAuth2 callback (old client flow - will be replaced)
-pub async fn oauth2_callback(
-    _state: State<Arc<AppConfig>>,
-    _path: Path<(String, String)>,
-    _query: Query<OAuth2CallbackQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    warn!(
-        "Legacy OAuth2 callback endpoint called - will be replaced with identity backend integration"
-    );
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(
-            json!({ "error": "OAuth2 client callback removed. This service is now an OAuth2 authorization server." }),
-        ),
-    ))
-}
 
 /// List available identity providers for a tenant
 pub async fn list_strategies(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "Tenant not found" })),

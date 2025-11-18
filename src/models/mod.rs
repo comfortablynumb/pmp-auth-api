@@ -3,7 +3,7 @@ pub mod user;
 
 // Re-export commonly used types
 pub use tenant::{AppConfig, IdentityBackend, OAuth2ServerConfig, StorageConfig};
-pub use user::{AuthResponse, Claims, LoginRequest, RegisterRequest, User, UserInfo, UserRole};
+pub use user::{Claims, UserRole};
 
 // Additional exports for tests and library users
 #[allow(unused_imports)]

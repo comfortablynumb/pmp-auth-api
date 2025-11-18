@@ -1,12 +1,11 @@
 // Token Introspection and Revocation (RFC 7662, RFC 7009)
 // Allows resource servers to validate tokens and revoke access
 
-use crate::models::AppConfig;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Token introspection request (RFC 7662)
@@ -92,7 +91,7 @@ struct TokenClaims {
 /// Token Introspection Endpoint (RFC 7662)
 /// POST /api/v1/tenant/{tenant_id}/oauth/introspect
 pub async fn token_introspect(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<IntrospectionRequest>,
 ) -> Result<Json<IntrospectionResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -102,7 +101,7 @@ pub async fn token_introspect(
     );
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),
@@ -111,7 +110,7 @@ pub async fn token_introspect(
 
     // Try to decode and validate the token
     // We'll try different signing keys (OAuth2, API keys, etc.)
-    let introspection_result = introspect_token(&request.token, tenant, &tenant_id);
+    let introspection_result = introspect_token(&request.token, tenant, &tenant_id, &state).await;
 
     match introspection_result {
         Ok(response) => {
@@ -143,10 +142,11 @@ pub async fn token_introspect(
 }
 
 /// Introspect a token and return metadata
-fn introspect_token(
+async fn introspect_token(
     token: &str,
     tenant: &crate::models::Tenant,
     _tenant_id: &str,
+    state: &AppState,
 ) -> Result<IntrospectionResponse, String> {
     // Try OAuth2 signing key first
     if let Some(oauth2_config) = &tenant.identity_provider.oauth2 {
@@ -171,6 +171,36 @@ fn introspect_token(
                         iss: Some(claims.iss.clone()),
                         jti: claims.jti.clone(),
                     });
+                }
+            }
+
+            // Check if token is revoked using storage backend
+            if let Some(jti) = &claims.jti {
+                match state.storage.is_token_revoked(jti).await {
+                    Ok(true) => {
+                        debug!("Token with JTI '{}' is revoked", jti);
+                        return Ok(IntrospectionResponse {
+                            active: false,
+                            scope: claims.scope.clone(),
+                            client_id: claims.client_id.clone(),
+                            username: None,
+                            token_type: Some("Bearer".to_string()),
+                            exp: claims.exp.map(|e| e as u64),
+                            iat: claims.iat.map(|i| i as u64),
+                            nbf: claims.nbf.map(|n| n as u64),
+                            sub: Some(claims.sub.clone()),
+                            aud: extract_audience(&claims.aud),
+                            iss: Some(claims.iss.clone()),
+                            jti: claims.jti.clone(),
+                        });
+                    }
+                    Ok(false) => {
+                        // Token not revoked, continue
+                    }
+                    Err(e) => {
+                        warn!("Failed to check token revocation status: {}", e);
+                        // Continue - don't fail on storage errors
+                    }
                 }
             }
 
@@ -275,25 +305,41 @@ fn introspect_token(
     Err("Token validation failed with all available keys".to_string())
 }
 
-/// Decode JWT with a public key
-fn decode_with_key(token: &str, _public_key_pem: &str) -> Result<TokenClaims, String> {
-    // TODO: Load actual public key from PEM and validate signature
-    // For now, try to decode without validation (just parse the claims)
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err("Invalid JWT format".to_string());
+/// Decode JWT with a public key and validate signature
+fn decode_with_key(token: &str, public_key_pem: &str) -> Result<TokenClaims, String> {
+    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+
+    // Load the public key from PEM (either file path or inline PEM)
+    let public_key_content = load_key_pem(public_key_pem)?;
+
+    // Create decoding key from RSA public key PEM
+    let decoding_key = DecodingKey::from_rsa_pem(public_key_content.as_bytes())
+        .map_err(|e| format!("Failed to parse public key: {}", e))?;
+
+    // Set up validation parameters
+    // We'll accept multiple algorithms and let the JWT header determine which one
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_required_spec_claims(&["exp"]); // Require expiration claim
+    validation.validate_exp = false; // We'll manually validate expiration to control the response
+
+    // Try to decode and validate the token
+    let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
+        .map_err(|e| format!("JWT validation failed: {}", e))?;
+
+    Ok(token_data.claims)
+}
+
+/// Load a key from either a file path or inline PEM
+fn load_key_pem(key_config: &str) -> Result<String, String> {
+    // Check if it's a file path or inline PEM
+    if key_config.starts_with("-----BEGIN") {
+        // Inline PEM
+        Ok(key_config.to_string())
+    } else {
+        // File path - try to read it
+        std::fs::read_to_string(key_config)
+            .map_err(|e| format!("Failed to read key file '{}': {}", key_config, e))
     }
-
-    // Decode payload (second part)
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    let payload_bytes = STANDARD
-        .decode(parts[1])
-        .map_err(|e| format!("Base64 decode error: {}", e))?;
-
-    let claims: TokenClaims =
-        serde_json::from_slice(&payload_bytes).map_err(|e| format!("JSON parse error: {}", e))?;
-
-    Ok(claims)
 }
 
 /// Check if an API key is revoked
@@ -332,7 +378,7 @@ fn extract_audience(aud: &Option<serde_json::Value>) -> Option<String> {
 /// Token Revocation Endpoint (RFC 7009)
 /// POST /api/v1/tenant/{tenant_id}/oauth/revoke
 pub async fn token_revoke(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<RevocationRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
@@ -342,14 +388,14 @@ pub async fn token_revoke(
     );
 
     // Get tenant configuration
-    let _tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let _tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "tenant_not_found" })),
         )
     })?;
 
-    // Try to parse the token to get the subject (key ID for API keys)
+    // Try to parse the token to get the JTI for revocation
     let parts: Vec<&str> = request.token.split('.').collect();
     if parts.len() == 3 {
         // Decode payload
@@ -367,14 +413,24 @@ pub async fn token_revoke(
                             info!("API key '{}' revoked successfully", claims.sub);
                         }
                     }
+                } else if let Some(jti) = claims.jti {
+                    // For OAuth2 tokens, store revocation in the database
+                    let expires_at = claims
+                        .exp
+                        .and_then(|exp| chrono::DateTime::from_timestamp(exp as i64, 0))
+                        .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(30));
+
+                    match state.storage.revoke_token(&jti, expires_at).await {
+                        Ok(_) => {
+                            info!("Token with JTI '{}' revoked successfully", jti);
+                        }
+                        Err(e) => {
+                            warn!("Failed to revoke token with JTI '{}': {}", jti, e);
+                            // Continue - RFC 7009 says always return 200 OK
+                        }
+                    }
                 } else {
-                    // For regular OAuth2 tokens, we would add to a revocation list
-                    // For now, just log it
-                    warn!(
-                        "Token revocation requested for OAuth2 token (not yet implemented): {}",
-                        claims.sub
-                    );
-                    // TODO: Add to revocation list in database
+                    warn!("Token has no JTI claim, cannot revoke: {}", claims.sub);
                 }
             }
         }

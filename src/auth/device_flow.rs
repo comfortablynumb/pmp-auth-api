@@ -1,7 +1,7 @@
 // Device Authorization Grant (RFC 8628)
 // For devices with limited input capabilities (smart TVs, IoT devices, etc.)
 
-use crate::models::AppConfig;
+use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -91,7 +91,7 @@ pub struct DeviceConfirmationRequest {
 /// Device Authorization Endpoint (RFC 8628 Section 3.1)
 /// POST /api/v1/tenant/{tenant_id}/oauth/device/authorize
 pub async fn device_authorize(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<DeviceAuthorizationRequest>,
 ) -> Result<Json<DeviceAuthorizationResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -101,7 +101,7 @@ pub async fn device_authorize(
     );
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -195,7 +195,7 @@ pub async fn device_authorize(
 /// Device Token Endpoint (RFC 8628 Section 3.4)
 /// POST /api/v1/tenant/{tenant_id}/oauth/device/token
 pub async fn device_token(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<DeviceTokenRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -216,7 +216,7 @@ pub async fn device_token(
     }
 
     // Get tenant configuration
-    let tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -335,6 +335,7 @@ pub async fn device_token(
         user_role,
         &scope_vec,
         &tenant_id,
+        &device_data.client_id,
         oauth2_config,
     )?;
 
@@ -383,7 +384,7 @@ pub async fn device_token(
 /// Device Verification Endpoint (checks if user code is valid)
 /// POST /api/v1/tenant/{tenant_id}/oauth/device/verify
 pub async fn device_verify(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<DeviceVerificationRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -396,7 +397,7 @@ pub async fn device_verify(
     let user_code = request.user_code.replace(' ', "").to_uppercase();
 
     // Get tenant configuration
-    let _tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let _tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
@@ -479,7 +480,7 @@ pub async fn device_verify(
 /// Device Confirmation Endpoint (user authorizes the device)
 /// POST /api/v1/tenant/{tenant_id}/oauth/device/confirm
 pub async fn device_confirm(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(request): Json<DeviceConfirmationRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
@@ -492,7 +493,7 @@ pub async fn device_confirm(
     let user_code = request.user_code.replace(' ', "").to_uppercase();
 
     // Get tenant configuration
-    let _tenant = config.get_tenant(&tenant_id).ok_or_else(|| {
+    let _tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),

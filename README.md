@@ -399,8 +399,8 @@ openssl rsa -in api-key-private.pem -pubout -out api-key-public.pem
 
 3. **Configure tenants**:
 ```bash
-cp config.example.yaml config.yaml
-# Edit config.yaml with your tenant configuration
+cp config/config.example.yaml config/config.yaml
+# Edit config/config.yaml with your tenant configuration
 ```
 
 4. **Build and run**:
@@ -415,14 +415,31 @@ The API will start on `http://0.0.0.0:3000`
 
 ```bash
 docker build -t pmp-auth-api .
-docker run -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml pmp-auth-api
+docker run -p 3000:3000 -v $(pwd)/config:/app/config pmp-auth-api
 ```
 
 ## Configuration
 
 ### Configuration File Structure
 
-Create a `config.yaml` file with the following structure:
+Create a `config/config.yaml` file with the following structure:
+
+**Environment Variable Interpolation:**
+
+You can use environment variables in your configuration files with the following syntax:
+- `${env:VAR_NAME}` - Required environment variable (fails if not set)
+- `${env:VAR_NAME:default_value}` - Optional with default value
+
+Example:
+```yaml
+database:
+  url: "${env:DATABASE_URL:postgresql://localhost:5432/mydb}"
+server:
+  host: "${env:SERVER_HOST:0.0.0.0}"
+  port: 3000
+```
+
+**Configuration Structure:**
 
 ```yaml
 tenants:

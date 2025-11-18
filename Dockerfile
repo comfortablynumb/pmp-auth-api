@@ -1,30 +1,24 @@
 # Multi-stage build for Rust application
 
 # Build stage
-FROM rust:1.75-slim as builder
+FROM rust:1.91-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy manifests
 COPY Cargo.toml Cargo.lock ./
-
-# Create a dummy main to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    echo "fn main() {}" > src/lib.rs
-
-# Build dependencies (cached layer)
-RUN cargo build --release && \
-    rm -rf src
-
-# Copy actual source code
-COPY . .
+COPY ./src ./src
+COPY ./static ./static
+COPY ./migrations ./migrations
+COPY ./keys ./keys
 
 # Build the application
 RUN cargo build --release
@@ -44,7 +38,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/pmp-auth-api /app/pmp-auth-api
 
 # Copy configuration files
-COPY config.docker.yaml /app/config.yaml
+COPY config /app/config
 COPY keys /app/keys
 
 # Create data directory
@@ -55,7 +49,7 @@ EXPOSE 3000
 
 # Set environment variables
 ENV RUST_LOG=info
-ENV CONFIG_PATH=/app/config.yaml
+ENV CONFIG_PATH=/app/config/config.docker.yaml
 
 # Run the application
 CMD ["/app/pmp-auth-api"]

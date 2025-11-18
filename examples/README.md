@@ -348,7 +348,7 @@ cd /path/to/pmp-auth-api && cargo run
 **Issue: "tenant not found"**
 ```bash
 # Check tenant configuration
-cat config.yaml
+cat config/config.yaml
 
 # Verify tenant ID in URL matches config
 curl http://localhost:3000/api/v1/tenant/YOUR-TENANT-ID/strategies
@@ -381,7 +381,7 @@ cargo install jwt-cli
 
 ### Documentation
 - [Main README](../README.md) - Project overview
-- [Configuration Guide](../config.example.yaml) - Tenant configuration
+- [Configuration Guide](../config/config.example.yaml) - Tenant configuration
 - [API Reference](../README.md#api-endpoints) - Complete endpoint documentation
 
 ### Standards & Specifications

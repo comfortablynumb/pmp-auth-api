@@ -17,6 +17,7 @@ fn test_create_oauth2_tenant_config() {
             jwks_endpoint: "/.well-known/jwks.json".to_string(),
             access_token_expiration_secs: 3600,
             refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
             signing_key: JwkSigningConfig {
                 algorithm: "RS256".to_string(),
                 kid: "test-key".to_string(),
@@ -75,6 +76,7 @@ fn test_multiple_tenants_different_providers() {
                     jwks_endpoint: "/.well-known/jwks.json".to_string(),
                     access_token_expiration_secs: 3600,
                     refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
                     signing_key: JwkSigningConfig {
                         algorithm: "RS256".to_string(),
                         kid: "tenant1-key".to_string(),
@@ -107,6 +109,7 @@ fn test_multiple_tenants_different_providers() {
                     jwks_endpoint: "/.well-known/jwks.json".to_string(),
                     access_token_expiration_secs: 3600,
                     refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
                     signing_key: JwkSigningConfig {
                         algorithm: "RS256".to_string(),
                         kid: "tenant2-key".to_string(),
@@ -166,6 +169,7 @@ fn test_tenant_with_all_providers() {
                     jwks_endpoint: "/.well-known/jwks.json".to_string(),
                     access_token_expiration_secs: 3600,
                     refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
                     signing_key: JwkSigningConfig {
                         algorithm: "RS256".to_string(),
                         kid: "full-key".to_string(),
@@ -272,6 +276,7 @@ fn test_arc_wrapped_config() {
                     jwks_endpoint: "/.well-known/jwks.json".to_string(),
                     access_token_expiration_secs: 3600,
                     refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
                     signing_key: JwkSigningConfig {
                         algorithm: "RS256".to_string(),
                         kid: "test-key".to_string(),
@@ -316,6 +321,7 @@ fn test_inactive_tenant() {
                     jwks_endpoint: "/.well-known/jwks.json".to_string(),
                     access_token_expiration_secs: 3600,
                     refresh_token_expiration_secs: 86400,
+            password_grant_enabled: false,
                     signing_key: JwkSigningConfig {
                         algorithm: "RS256".to_string(),
                         kid: "inactive-key".to_string(),
