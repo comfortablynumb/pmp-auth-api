@@ -221,6 +221,16 @@ fn create_tenant_routes(state: AppState) -> Router {
             "/:tenant_id/oauth/logout",
             get(auth::oauth2_logout).post(auth::oauth2_logout),
         )
+        // Dynamic Client Registration (RFC 7591, RFC 7592)
+        .route("/:tenant_id/oauth/register", post(auth::register_client))
+        .route(
+            "/:tenant_id/oauth/register/:client_id",
+            get(auth::get_client)
+                .put(auth::update_client)
+                .delete(auth::delete_client),
+        )
+        // Token Exchange (RFC 8693)
+        .route("/:tenant_id/oauth/token/exchange", post(auth::token_exchange))
         // Token Introspection and Revocation endpoints (RFC 7662, RFC 7009)
         .route("/:tenant_id/oauth/introspect", post(auth::token_introspect))
         .route("/:tenant_id/oauth/revoke", post(auth::token_revoke))

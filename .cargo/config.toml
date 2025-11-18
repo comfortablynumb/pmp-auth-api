@@ -1,4 +1,4 @@
-feat# Cargo configuration
+# Cargo configuration
 
 [build]
 # Build jobs (uses all available cores by default)

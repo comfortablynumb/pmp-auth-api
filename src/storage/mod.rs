@@ -223,6 +223,21 @@ pub struct OAuth2ClientData {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub active: bool,
+    /// Public key (PEM format) for JWT client assertion with RS256/ES256
+    #[serde(default)]
+    pub public_key_pem: Option<String>,
+    /// JWKS URI for retrieving client's public keys
+    #[serde(default)]
+    pub jwks_uri: Option<String>,
+    /// Token endpoint authentication method (client_secret_post, client_secret_basic, private_key_jwt, etc.)
+    #[serde(default)]
+    pub token_endpoint_auth_method: Option<String>,
+    /// Back-channel logout URI (RFC 8965) - where to send logout notifications
+    #[serde(default)]
+    pub backchannel_logout_uri: Option<String>,
+    /// Whether backchannel_logout_uri requires session_id (sid) claim
+    #[serde(default)]
+    pub backchannel_logout_session_required: bool,
 }
 
 /// OAuth2 client type

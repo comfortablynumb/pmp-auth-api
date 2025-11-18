@@ -472,6 +472,121 @@ pub async fn oauth2_token(
 /// Supports both GET and POST methods for compatibility.
 /// Provides front-channel logout with optional redirect.
 ///
+/// Send back-channel logout notifications to all registered clients
+/// This is called internally when a user logs out to notify all relying parties
+async fn trigger_backchannel_logout(
+    user_id: &str,
+    session_id: Option<&str>,
+    tenant: &Tenant,
+    tenant_id: &str,
+    state: &AppState,
+) {
+    // Get OAuth2 and OIDC config
+    let oauth2_config = match &tenant.identity_provider.oauth2 {
+        Some(config) => config,
+        None => {
+            debug!("OAuth2 not enabled for tenant, skipping backchannel logout");
+            return;
+        }
+    };
+
+    let oidc_config = match &tenant.identity_provider.oidc {
+        Some(config) => config,
+        None => {
+            debug!("OIDC not enabled for tenant, skipping backchannel logout");
+            return;
+        }
+    };
+
+    // Get all clients for this tenant
+    let clients = match state.storage.list_oauth2_clients(tenant_id).await {
+        Ok(clients) => clients,
+        Err(e) => {
+            warn!("Failed to list OAuth2 clients for backchannel logout: {}", e);
+            return;
+        }
+    };
+
+    // Filter clients that have backchannel_logout_uri configured
+    let logout_clients: Vec<_> = clients
+        .into_iter()
+        .filter(|client| client.backchannel_logout_uri.is_some())
+        .collect();
+
+    if logout_clients.is_empty() {
+        debug!("No clients configured for backchannel logout");
+        return;
+    }
+
+    info!(
+        "Triggering backchannel logout for {} client(s)",
+        logout_clients.len()
+    );
+
+    // Send logout notifications to all clients (in parallel)
+    let mut tasks = vec![];
+
+    for client in logout_clients {
+        let logout_uri = match client.backchannel_logout_uri {
+            Some(uri) => uri,
+            None => continue,
+        };
+
+        // Check if session_id is required but not provided
+        if client.backchannel_logout_session_required && session_id.is_none() {
+            warn!(
+                "Client '{}' requires session_id but none provided, skipping",
+                client.client_id
+            );
+            continue;
+        }
+
+        // Generate logout token for this client
+        let logout_token = match crate::auth::backchannel_logout::generate_logout_token(
+            Some(user_id),
+            session_id,
+            &client.client_id,
+            &oidc_config.issuer,
+            oauth2_config,
+        ) {
+            Ok(token) => token,
+            Err((_, json)) => {
+                warn!(
+                    "Failed to generate logout token for client '{}': {:?}",
+                    client.client_id, json
+                );
+                continue;
+            }
+        };
+
+        // Spawn async task to send notification
+        let client_id = client.client_id.clone();
+        tasks.push(tokio::spawn(async move {
+            match crate::auth::backchannel_logout::notify_client_logout(&logout_uri, &logout_token)
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Successfully sent backchannel logout to client '{}'",
+                        client_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to send backchannel logout to client '{}': {}",
+                        client_id, e
+                    );
+                }
+            }
+        }));
+    }
+
+    // Wait for all notifications to complete (with timeout)
+    for task in tasks {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), task).await;
+    }
+}
+
 /// POST /api/v1/tenant/{tenant_id}/oauth/logout
 /// GET /api/v1/tenant/{tenant_id}/oauth/logout
 #[utoipa::path(
@@ -497,12 +612,16 @@ pub async fn oauth2_logout(
     info!("Logout request for tenant '{}'", tenant_id);
 
     // Get tenant configuration
-    let _tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
+    let tenant = state.config.get_tenant(&tenant_id).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "tenant_not_found" })),
         )
     })?;
+
+    // Extract user_id and session_id from ID token for backchannel logout
+    let mut user_id_for_logout: Option<String> = None;
+    let session_id_for_logout: Option<String> = None;
 
     // Validate ID token hint if provided
     if let Some(ref id_token_hint) = params.id_token_hint {
@@ -514,6 +633,10 @@ pub async fn oauth2_logout(
             if let Ok(payload_bytes) = STANDARD.decode(parts[1]) {
                 if let Ok(claims) = serde_json::from_slice::<crate::models::Claims>(&payload_bytes)
                 {
+                    // Extract user_id (sub) for backchannel logout
+                    user_id_for_logout = Some(claims.sub.clone());
+                    // TODO: Extract session_id (sid) if present in OIDC claims
+
                     // Revoke the token by its JTI
                     if let Some(jti) = claims.jti {
                         let expires_at = chrono::DateTime::from_timestamp(claims.exp as i64, 0)
@@ -602,7 +725,44 @@ pub async fn oauth2_logout(
         }
 
         info!("Redirecting after logout to: {}", redirect_url);
+
+        // Trigger backchannel logout in background (non-blocking)
+        if let Some(user_id) = user_id_for_logout {
+            let state_clone = state.clone();
+            let tenant_clone = tenant.clone();
+            let tenant_id_clone = tenant_id.clone();
+            let session_id_clone = session_id_for_logout.clone();
+            tokio::spawn(async move {
+                trigger_backchannel_logout(
+                    &user_id,
+                    session_id_clone.as_deref(),
+                    &tenant_clone,
+                    &tenant_id_clone,
+                    &state_clone,
+                )
+                .await;
+            });
+        }
+
         return Ok(Redirect::temporary(&redirect_url).into_response());
+    }
+
+    // Trigger backchannel logout in background (non-blocking)
+    if let Some(user_id) = user_id_for_logout {
+        let state_clone = state.clone();
+        let tenant_clone = tenant.clone();
+        let tenant_id_clone = tenant_id.clone();
+        let session_id_clone = session_id_for_logout.clone();
+        tokio::spawn(async move {
+            trigger_backchannel_logout(
+                &user_id,
+                session_id_clone.as_deref(),
+                &tenant_clone,
+                &tenant_id_clone,
+                &state_clone,
+            )
+            .await;
+        });
     }
 
     // Return JSON response if no redirect
@@ -1649,7 +1809,7 @@ async fn validate_client_assertion(
     tenant_id: &str,
     state: &AppState,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
     // Get client to retrieve public key or secret
     let client = state
@@ -1676,34 +1836,129 @@ async fn validate_client_assertion(
             )
         })?;
 
-    // For now, we'll validate using the client_secret as HMAC key
-    // In production, this should use the client's registered public key
-
-    // Decode and validate the JWT
-    let client_secret = client.client_secret.as_ref().ok_or_else(|| {
-        warn!("Client '{}' has no secret for JWT validation", client_id);
+    // Decode JWT header to determine algorithm
+    let header = decode_header(assertion).map_err(|e| {
+        warn!(
+            "Failed to decode JWT header for client '{}': {}",
+            client_id, e
+        );
         (
             StatusCode::UNAUTHORIZED,
             Json(json!({
                 "error": "invalid_client",
-                "error_description": "Client has no secret configured for JWT assertion"
+                "error_description": "Invalid JWT format"
             })),
         )
     })?;
 
+    // Determine algorithm and create appropriate decoding key
+    let (algorithm, decoding_key) = match header.alg {
+        Algorithm::HS256 => {
+            // HMAC with client_secret
+            let client_secret = client.client_secret.as_ref().ok_or_else(|| {
+                warn!("Client '{}' has no secret for HS256 JWT validation", client_id);
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "invalid_client",
+                        "error_description": "Client has no secret configured for HS256 assertion"
+                    })),
+                )
+            })?;
+            (
+                Algorithm::HS256,
+                DecodingKey::from_secret(client_secret.as_bytes()),
+            )
+        }
+        Algorithm::RS256 => {
+            // RSA signature with public key
+            let public_key_pem = client.public_key_pem.as_ref().ok_or_else(|| {
+                warn!(
+                    "Client '{}' has no public key for RS256 JWT validation",
+                    client_id
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "invalid_client",
+                        "error_description": "Client has no public key configured for RS256 assertion"
+                    })),
+                )
+            })?;
+
+            let key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
+                warn!(
+                    "Failed to parse RSA public key for client '{}': {}",
+                    client_id, e
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "invalid_client",
+                        "error_description": "Invalid RSA public key format"
+                    })),
+                )
+            })?;
+            (Algorithm::RS256, key)
+        }
+        Algorithm::ES256 => {
+            // ECDSA signature with public key
+            let public_key_pem = client.public_key_pem.as_ref().ok_or_else(|| {
+                warn!(
+                    "Client '{}' has no public key for ES256 JWT validation",
+                    client_id
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "invalid_client",
+                        "error_description": "Client has no public key configured for ES256 assertion"
+                    })),
+                )
+            })?;
+
+            let key = DecodingKey::from_ec_pem(public_key_pem.as_bytes()).map_err(|e| {
+                warn!(
+                    "Failed to parse EC public key for client '{}': {}",
+                    client_id, e
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "invalid_client",
+                        "error_description": "Invalid EC public key format"
+                    })),
+                )
+            })?;
+            (Algorithm::ES256, key)
+        }
+        other => {
+            warn!(
+                "Unsupported JWT algorithm '{:?}' for client '{}'",
+                other, client_id
+            );
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": "invalid_client",
+                    "error_description": format!("Unsupported algorithm: {:?}", other)
+                })),
+            ));
+        }
+    };
+
     // Create validation configuration
-    let mut validation = Validation::new(Algorithm::HS256);
+    let mut validation = Validation::new(algorithm);
     // Set expected audience (token endpoint)
     validation.set_audience(&[format!("/api/v1/tenant/{}/oauth/token", tenant_id)]);
     validation.set_required_spec_claims(&["exp", "iat", "iss", "sub", "aud", "jti"]);
 
     // Decode and validate JWT
-    let decoding_key = DecodingKey::from_secret(client_secret.as_bytes());
     let token_data = decode::<ClientAssertionClaims>(assertion, &decoding_key, &validation)
         .map_err(|e| {
             warn!(
-                "JWT assertion validation failed for client '{}': {}",
-                client_id, e
+                "JWT assertion validation failed for client '{}' with {:?}: {}",
+                client_id, algorithm, e
             );
             (
                 StatusCode::UNAUTHORIZED,

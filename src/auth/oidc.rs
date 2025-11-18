@@ -105,8 +105,8 @@ pub async fn oidc_discovery(
         // Device authorization endpoint (RFC 8628)
         "device_authorization_endpoint": format!("{}/oauth/device/authorize", base_url),
 
-        // Dynamic client registration (RFC 7591) - if supported
-        // "registration_endpoint": format!("{}/oauth/register", base_url),
+        // Dynamic client registration (RFC 7591)
+        "registration_endpoint": format!("{}/oauth/register", base_url),
 
         // Session management - if supported
         // "end_session_endpoint": format!("{}/oauth/logout", base_url),
@@ -148,6 +148,10 @@ pub async fn oidc_discovery(
         "ui_locales_supported": ["en-US"],
         "op_policy_uri": format!("{}/policy", base_url),
         "op_tos_uri": format!("{}/terms", base_url),
+
+        // Back-Channel Logout (RFC 8965)
+        "backchannel_logout_supported": true,
+        "backchannel_logout_session_supported": true,
     })))
 }
 

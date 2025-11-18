@@ -720,6 +720,11 @@ impl StorageBackend for PostgresStorage {
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                     active: row.get("active"),
+                    public_key_pem: None, // TODO: Add to database schema
+                    jwks_uri: None,       // TODO: Add to database schema
+                    token_endpoint_auth_method: None, // TODO: Add to database schema
+                    backchannel_logout_uri: None, // TODO: Add to database schema
+                    backchannel_logout_session_required: false, // TODO: Add to database schema
                 }))
             }
             None => Ok(None),
@@ -774,6 +779,11 @@ impl StorageBackend for PostgresStorage {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 active: row.get("active"),
+                public_key_pem: None, // TODO: Add to database schema
+                jwks_uri: None,       // TODO: Add to database schema
+                token_endpoint_auth_method: None, // TODO: Add to database schema
+                backchannel_logout_uri: None, // TODO: Add to database schema
+                backchannel_logout_session_required: false, // TODO: Add to database schema
             });
         }
 
