@@ -56,6 +56,11 @@ pub struct ClientRegistrationRequest {
     /// Whether backchannel logout requires session_id
     #[serde(default)]
     pub backchannel_logout_session_required: bool,
+    /// Front-channel logout URI (OIDC Front-Channel Logout)
+    pub frontchannel_logout_uri: Option<String>,
+    /// Whether front-channel logout requires session_id
+    #[serde(default)]
+    pub frontchannel_logout_session_required: bool,
 }
 
 /// Client Registration Response (RFC 7591 Section 3.2.1)
@@ -98,6 +103,12 @@ pub struct ClientRegistrationResponse {
     /// Whether backchannel logout requires session_id
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backchannel_logout_session_required: Option<bool>,
+    /// Front-channel logout URI
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontchannel_logout_uri: Option<String>,
+    /// Whether front-channel logout requires session_id
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontchannel_logout_session_required: Option<bool>,
 }
 
 /// Register a new OAuth2 client
@@ -175,12 +186,19 @@ pub async fn register_client(
         .map(|s| s.split_whitespace().map(String::from).collect())
         .unwrap_or_else(|| vec!["openid".to_string(), "profile".to_string(), "email".to_string()]);
 
-    // Extract public key from JWKS if provided
+    // Extract public key from JWKS if provided (backward compatibility - first key)
     let public_key_pem = if let Some(jwks) = &request.jwks {
         extract_public_key_from_jwks(jwks)?
     } else {
         None
     };
+
+    // Store all JWKS keys if provided
+    let jwks_keys = request.jwks.as_ref().and_then(|jwks| {
+        jwks.get("keys")
+            .and_then(|k| k.as_array())
+            .map(|keys| keys.clone())
+    });
 
     // Create client data
     let client_data = OAuth2ClientData {
@@ -192,15 +210,19 @@ pub async fn register_client(
         redirect_uris: request.redirect_uris.clone(),
         allowed_scopes,
         grant_types: grant_types.clone(),
+        response_types: response_types.clone(),
         client_type,
         created_at: Utc::now(),
         updated_at: Utc::now(),
         active: true,
         public_key_pem,
         jwks_uri: request.jwks_uri.clone(),
+        jwks_keys,
         token_endpoint_auth_method: request.token_endpoint_auth_method.clone(),
         backchannel_logout_uri: request.backchannel_logout_uri.clone(),
         backchannel_logout_session_required: request.backchannel_logout_session_required,
+        frontchannel_logout_uri: request.frontchannel_logout_uri.clone(),
+        frontchannel_logout_session_required: request.frontchannel_logout_session_required,
     };
 
     // Store client in database
@@ -236,6 +258,12 @@ pub async fn register_client(
         jwks_uri: request.jwks_uri,
         backchannel_logout_uri: request.backchannel_logout_uri,
         backchannel_logout_session_required: if request.backchannel_logout_session_required {
+            Some(true)
+        } else {
+            None
+        },
+        frontchannel_logout_uri: request.frontchannel_logout_uri,
+        frontchannel_logout_session_required: if request.frontchannel_logout_session_required {
             Some(true)
         } else {
             None
@@ -307,7 +335,7 @@ pub async fn get_client(
         client_secret_expires_at: Some(0),
         redirect_uris: client.redirect_uris,
         grant_types: client.grant_types,
-        response_types: vec![], // TODO: Store response_types
+        response_types: client.response_types,
         client_name: Some(client.name),
         client_uri: None,
         token_endpoint_auth_method: client.token_endpoint_auth_method,
@@ -315,6 +343,12 @@ pub async fn get_client(
         jwks_uri: client.jwks_uri,
         backchannel_logout_uri: client.backchannel_logout_uri,
         backchannel_logout_session_required: if client.backchannel_logout_session_required {
+            Some(true)
+        } else {
+            None
+        },
+        frontchannel_logout_uri: client.frontchannel_logout_uri,
+        frontchannel_logout_session_required: if client.frontchannel_logout_session_required {
             Some(true)
         } else {
             None
@@ -390,6 +424,10 @@ pub async fn update_client(
         client.grant_types = request.grant_types.clone();
     }
 
+    if !request.response_types.is_empty() {
+        client.response_types = request.response_types.clone();
+    }
+
     if let Some(name) = request.client_name {
         client.name = name;
     }
@@ -399,9 +437,22 @@ pub async fn update_client(
     }
 
     client.jwks_uri = request.jwks_uri.clone();
+
+    // Update JWKS keys if provided
+    if let Some(ref jwks) = request.jwks {
+        client.jwks_keys = jwks.get("keys")
+            .and_then(|k| k.as_array())
+            .map(|keys| keys.clone());
+
+        // Also update public_key_pem for backward compatibility
+        client.public_key_pem = extract_public_key_from_jwks(jwks)?;
+    }
+
     client.token_endpoint_auth_method = request.token_endpoint_auth_method.clone();
     client.backchannel_logout_uri = request.backchannel_logout_uri.clone();
     client.backchannel_logout_session_required = request.backchannel_logout_session_required;
+    client.frontchannel_logout_uri = request.frontchannel_logout_uri.clone();
+    client.frontchannel_logout_session_required = request.frontchannel_logout_session_required;
     client.updated_at = Utc::now();
 
     // Update in storage
@@ -426,7 +477,7 @@ pub async fn update_client(
         client_secret_expires_at: Some(0),
         redirect_uris: client.redirect_uris,
         grant_types: client.grant_types,
-        response_types: vec![],
+        response_types: client.response_types,
         client_name: Some(client.name),
         client_uri: None,
         token_endpoint_auth_method: client.token_endpoint_auth_method,
@@ -434,6 +485,12 @@ pub async fn update_client(
         jwks_uri: client.jwks_uri,
         backchannel_logout_uri: client.backchannel_logout_uri,
         backchannel_logout_session_required: if client.backchannel_logout_session_required {
+            Some(true)
+        } else {
+            None
+        },
+        frontchannel_logout_uri: client.frontchannel_logout_uri,
+        frontchannel_logout_session_required: if client.frontchannel_logout_session_required {
             Some(true)
         } else {
             None
@@ -501,13 +558,135 @@ pub async fn delete_client(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Extract RSA public key from JWKS (simplified)
+/// Extract RSA/EC public key from JWKS
 fn extract_public_key_from_jwks(
-    _jwks: &serde_json::Value,
+    jwks: &serde_json::Value,
 ) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
-    // TODO: Implement proper JWKS parsing to extract RSA public key
-    // For now, return None - clients should use jwks_uri instead
-    Ok(None)
+    // Parse JWKS structure
+    let keys = jwks
+        .get("keys")
+        .and_then(|k| k.as_array())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid_client_metadata",
+                    "error_description": "JWKS must have a 'keys' array"
+                })),
+            )
+        })?;
+
+    if keys.is_empty() {
+        return Ok(None);
+    }
+
+    // Get the first key (TODO: support multiple keys and key selection)
+    let key = &keys[0];
+
+    // Check key type
+    let kty = key
+        .get("kty")
+        .and_then(|k| k.as_str())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid_client_metadata",
+                    "error_description": "JWK must have 'kty' field"
+                })),
+            )
+        })?;
+
+    match kty {
+        "RSA" => {
+            // Extract RSA public key components
+            let n = key.get("n").and_then(|v| v.as_str()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": "RSA key must have 'n' (modulus)"
+                    })),
+                )
+            })?;
+
+            let e = key.get("e").and_then(|v| v.as_str()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": "RSA key must have 'e' (exponent)"
+                    })),
+                )
+            })?;
+
+            // Convert JWK to PEM format
+            // This is a simplified version - in production you'd use a proper library
+            // For now, store the JWK components as JSON for later conversion
+            let pem_representation = json!({
+                "kty": "RSA",
+                "n": n,
+                "e": e,
+                "kid": key.get("kid"),
+                "use": key.get("use"),
+                "alg": key.get("alg")
+            });
+
+            Ok(Some(pem_representation.to_string()))
+        }
+        "EC" => {
+            // Extract EC public key components
+            let crv = key.get("crv").and_then(|v| v.as_str()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": "EC key must have 'crv' (curve)"
+                    })),
+                )
+            })?;
+
+            let x = key.get("x").and_then(|v| v.as_str()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": "EC key must have 'x' coordinate"
+                    })),
+                )
+            })?;
+
+            let y = key.get("y").and_then(|v| v.as_str()).ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_client_metadata",
+                        "error_description": "EC key must have 'y' coordinate"
+                    })),
+                )
+            })?;
+
+            // Store EC key components as JSON
+            let pem_representation = json!({
+                "kty": "EC",
+                "crv": crv,
+                "x": x,
+                "y": y,
+                "kid": key.get("kid"),
+                "use": key.get("use"),
+                "alg": key.get("alg")
+            });
+
+            Ok(Some(pem_representation.to_string()))
+        }
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "invalid_client_metadata",
+                "error_description": format!("Unsupported key type: {}. Supported types: RSA, EC", kty)
+            })),
+        )),
+    }
 }
 
 #[cfg(test)]

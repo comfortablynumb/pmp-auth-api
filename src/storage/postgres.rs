@@ -641,8 +641,11 @@ impl StorageBackend for PostgresStorage {
             r#"
             INSERT INTO oauth2_clients
             (client_id, client_secret, tenant_id, name, description, redirect_uris,
-             allowed_scopes, grant_types, client_type, created_at, updated_at, active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             allowed_scopes, grant_types, response_types, client_type, created_at, updated_at, active,
+             public_key_pem, jwks_uri, jwks_keys, token_endpoint_auth_method,
+             backchannel_logout_uri, backchannel_logout_session_required,
+             frontchannel_logout_uri, frontchannel_logout_session_required)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             "#,
         )
         .bind(client_id)
@@ -653,6 +656,7 @@ impl StorageBackend for PostgresStorage {
         .bind(&data.redirect_uris)
         .bind(&data.allowed_scopes)
         .bind(&data.grant_types)
+        .bind(&data.response_types)
         .bind(match data.client_type {
             OAuth2ClientType::Confidential => "confidential",
             OAuth2ClientType::Public => "public",
@@ -660,6 +664,14 @@ impl StorageBackend for PostgresStorage {
         .bind(data.created_at)
         .bind(data.updated_at)
         .bind(data.active)
+        .bind(&data.public_key_pem)
+        .bind(&data.jwks_uri)
+        .bind(&data.jwks_keys)
+        .bind(&data.token_endpoint_auth_method)
+        .bind(&data.backchannel_logout_uri)
+        .bind(data.backchannel_logout_session_required)
+        .bind(&data.frontchannel_logout_uri)
+        .bind(data.frontchannel_logout_session_required)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -681,7 +693,10 @@ impl StorageBackend for PostgresStorage {
         let row = sqlx::query(
             r#"
             SELECT client_id, client_secret, tenant_id, name, description, redirect_uris,
-                   allowed_scopes, grant_types, client_type, created_at, updated_at, active
+                   allowed_scopes, grant_types, response_types, client_type, created_at, updated_at, active,
+                   public_key_pem, jwks_uri, jwks_keys, token_endpoint_auth_method,
+                   backchannel_logout_uri, backchannel_logout_session_required,
+                   frontchannel_logout_uri, frontchannel_logout_session_required
             FROM oauth2_clients
             WHERE client_id = $1
             "#,
@@ -716,15 +731,19 @@ impl StorageBackend for PostgresStorage {
                     redirect_uris: row.get("redirect_uris"),
                     allowed_scopes: row.get("allowed_scopes"),
                     grant_types: row.get("grant_types"),
+                    response_types: row.get("response_types"),
                     client_type,
                     created_at: row.get("created_at"),
                     updated_at: row.get("updated_at"),
                     active: row.get("active"),
-                    public_key_pem: None, // TODO: Add to database schema
-                    jwks_uri: None,       // TODO: Add to database schema
-                    token_endpoint_auth_method: None, // TODO: Add to database schema
-                    backchannel_logout_uri: None, // TODO: Add to database schema
-                    backchannel_logout_session_required: false, // TODO: Add to database schema
+                    public_key_pem: row.get("public_key_pem"),
+                    jwks_uri: row.get("jwks_uri"),
+                    jwks_keys: row.get("jwks_keys"),
+                    token_endpoint_auth_method: row.get("token_endpoint_auth_method"),
+                    backchannel_logout_uri: row.get("backchannel_logout_uri"),
+                    backchannel_logout_session_required: row.get("backchannel_logout_session_required"),
+                    frontchannel_logout_uri: row.get("frontchannel_logout_uri"),
+                    frontchannel_logout_session_required: row.get("frontchannel_logout_session_required"),
                 }))
             }
             None => Ok(None),
@@ -738,7 +757,10 @@ impl StorageBackend for PostgresStorage {
         let rows = sqlx::query(
             r#"
             SELECT client_id, client_secret, tenant_id, name, description, redirect_uris,
-                   allowed_scopes, grant_types, client_type, created_at, updated_at, active
+                   allowed_scopes, grant_types, response_types, client_type, created_at, updated_at, active,
+                   public_key_pem, jwks_uri, jwks_keys, token_endpoint_auth_method,
+                   backchannel_logout_uri, backchannel_logout_session_required,
+                   frontchannel_logout_uri, frontchannel_logout_session_required
             FROM oauth2_clients
             WHERE tenant_id = $1
             ORDER BY created_at DESC
@@ -775,15 +797,19 @@ impl StorageBackend for PostgresStorage {
                 redirect_uris: row.get("redirect_uris"),
                 allowed_scopes: row.get("allowed_scopes"),
                 grant_types: row.get("grant_types"),
+                response_types: row.get("response_types"),
                 client_type,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 active: row.get("active"),
-                public_key_pem: None, // TODO: Add to database schema
-                jwks_uri: None,       // TODO: Add to database schema
-                token_endpoint_auth_method: None, // TODO: Add to database schema
-                backchannel_logout_uri: None, // TODO: Add to database schema
-                backchannel_logout_session_required: false, // TODO: Add to database schema
+                public_key_pem: row.get("public_key_pem"),
+                jwks_uri: row.get("jwks_uri"),
+                jwks_keys: row.get("jwks_keys"),
+                token_endpoint_auth_method: row.get("token_endpoint_auth_method"),
+                backchannel_logout_uri: row.get("backchannel_logout_uri"),
+                backchannel_logout_session_required: row.get("backchannel_logout_session_required"),
+                frontchannel_logout_uri: row.get("frontchannel_logout_uri"),
+                frontchannel_logout_session_required: row.get("frontchannel_logout_session_required"),
             });
         }
 
@@ -799,8 +825,11 @@ impl StorageBackend for PostgresStorage {
             r#"
             UPDATE oauth2_clients
             SET client_secret = $2, tenant_id = $3, name = $4, description = $5,
-                redirect_uris = $6, allowed_scopes = $7, grant_types = $8,
-                client_type = $9, updated_at = $10, active = $11
+                redirect_uris = $6, allowed_scopes = $7, grant_types = $8, response_types = $9,
+                client_type = $10, updated_at = $11, active = $12,
+                public_key_pem = $13, jwks_uri = $14, jwks_keys = $15, token_endpoint_auth_method = $16,
+                backchannel_logout_uri = $17, backchannel_logout_session_required = $18,
+                frontchannel_logout_uri = $19, frontchannel_logout_session_required = $20
             WHERE client_id = $1
             "#,
         )
@@ -812,12 +841,21 @@ impl StorageBackend for PostgresStorage {
         .bind(&data.redirect_uris)
         .bind(&data.allowed_scopes)
         .bind(&data.grant_types)
+        .bind(&data.response_types)
         .bind(match data.client_type {
             OAuth2ClientType::Confidential => "confidential",
             OAuth2ClientType::Public => "public",
         })
         .bind(data.updated_at)
         .bind(data.active)
+        .bind(&data.public_key_pem)
+        .bind(&data.jwks_uri)
+        .bind(&data.jwks_keys)
+        .bind(&data.token_endpoint_auth_method)
+        .bind(&data.backchannel_logout_uri)
+        .bind(data.backchannel_logout_session_required)
+        .bind(&data.frontchannel_logout_uri)
+        .bind(data.frontchannel_logout_session_required)
         .execute(&self.pool)
         .await
         .map_err(|e| {

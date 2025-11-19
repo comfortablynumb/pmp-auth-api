@@ -152,15 +152,19 @@ pub async fn create_client(
         redirect_uris: request.redirect_uris.clone(),
         allowed_scopes: request.scopes.clone(),
         grant_types: request.grant_types.clone(),
+        response_types: vec!["code".to_string()],
         client_type: OAuth2ClientType::Confidential,
         created_at: now,
         updated_at: now,
         active: true,
         public_key_pem: None,
         jwks_uri: None,
+        jwks_keys: None,
         token_endpoint_auth_method: None,
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
     };
 
     // Store client

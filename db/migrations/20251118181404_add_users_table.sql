@@ -1,5 +1,6 @@
+-- migrate:up
 -- Add users table for user management
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id VARCHAR(255) PRIMARY KEY,
     tenant_id VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
@@ -16,7 +17,14 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users (tenant_id);
-CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
-CREATE INDEX IF NOT EXISTS idx_users_tenant_email ON users (tenant_id, email);
-CREATE INDEX IF NOT EXISTS idx_users_active ON users (active);
+CREATE INDEX idx_users_tenant_id ON users (tenant_id);
+CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX idx_users_tenant_email ON users (tenant_id, email);
+CREATE INDEX idx_users_active ON users (active);
+
+-- migrate:down
+DROP INDEX IF EXISTS idx_users_active;
+DROP INDEX IF EXISTS idx_users_tenant_email;
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_tenant_id;
+DROP TABLE IF EXISTS users;

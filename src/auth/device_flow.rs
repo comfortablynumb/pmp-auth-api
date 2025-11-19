@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Device Authorization Request (RFC 8628)
@@ -271,9 +271,28 @@ pub async fn device_token(
     // Generate tokens
     let oauth2_config = tenant.identity_provider.oauth2.as_ref().unwrap();
 
-    // TODO: Fetch actual user from identity backend
-    let user_email = format!("{}@device-flow", user_id);
-    let user_role = crate::models::UserRole::User;
+    // Fetch actual user from storage backend
+    let user = state
+        .storage
+        .get_user(&user_id)
+        .await
+        .map_err(|e| {
+            warn!("Failed to fetch user '{}' from storage: {}", user_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "server_error", "error_description": "Failed to fetch user information"})),
+            )
+        })?
+        .ok_or_else(|| {
+            warn!("User '{}' not found in storage", user_id);
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "invalid_grant", "error_description": "User not found"})),
+            )
+        })?;
+
+    let user_email = user.email;
+    let user_role = crate::models::UserRole::from_str(&user.role).unwrap_or(crate::models::UserRole::User);
 
     let scope_vec: Vec<String> = device_data
         .scope

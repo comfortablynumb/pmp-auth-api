@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{debug, info, warn};
@@ -297,12 +297,20 @@ fn generate_api_key_token(
         }
     };
 
-    // TODO: Load private key from file
-    let encoding_key = EncodingKey::from_rsa_pem(b"dummy-key").map_err(|e| {
+    // Load private key from tenant configuration
+    let private_key_pem = load_key_pem(&config.signing_key.private_key).map_err(|e| {
         warn!("Failed to load API key signing key: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "server_error", "error_description": "Failed to load signing key" })),
+        )
+    })?;
+
+    let encoding_key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes()).map_err(|e| {
+        warn!("Failed to parse API key signing key: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "server_error", "error_description": "Invalid signing key format" })),
         )
     })?;
 
@@ -318,24 +326,123 @@ fn generate_api_key_token(
     })
 }
 
-/// Validate an API key (for middleware use)
-#[allow(dead_code)]
-pub fn validate_api_key(
-    _token: &str,
-    _tenant_id: &str,
-) -> Result<ApiKeyData, (StatusCode, String)> {
-    // TODO: Decode and validate the JWT
-    // For now, this is a placeholder
+/// Load a key from either a file path or inline PEM
+fn load_key_pem(key_config: &str) -> Result<String, String> {
+    // Check if it's a file path or inline PEM
+    if key_config.starts_with("-----BEGIN") {
+        // Inline PEM
+        Ok(key_config.to_string())
+    } else {
+        // File path - try to read it
+        std::fs::read_to_string(key_config)
+            .map_err(|e| format!("Failed to read key file '{}': {}", key_config, e))
+    }
+}
 
-    // In a real implementation, we'd:
-    // 1. Decode the JWT and extract the key_id from sub claim
-    // 2. Fetch from storage backend using state.storage.get_api_key(&key_id)
-    // 3. Check if key is not revoked and not expired
-    // For now, we'll just return an error
-    Err((
-        StatusCode::UNAUTHORIZED,
-        "API key validation not implemented".to_string(),
-    ))
+/// Validate an API key (for middleware use)
+pub async fn validate_api_key(
+    token: &str,
+    tenant_id: &str,
+    config: &ApiKeyConfig,
+    storage: &std::sync::Arc<dyn crate::storage::StorageBackend>,
+) -> Result<ApiKeyData, (StatusCode, String)> {
+    // Determine algorithm
+    let algorithm = match config.signing_key.algorithm.as_str() {
+        "RS256" => Algorithm::RS256,
+        "ES256" => Algorithm::ES256,
+        _ => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Unsupported algorithm".to_string(),
+            ))
+        }
+    };
+
+    // Load public key for validation
+    let public_key_pem = load_key_pem(&config.signing_key.public_key).map_err(|e| {
+        warn!("Failed to load public key for API key validation: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to load public key".to_string(),
+        )
+    })?;
+
+    let decoding_key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
+        warn!("Failed to parse public key for API key validation: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid public key format".to_string(),
+        )
+    })?;
+
+    // Set up validation
+    let mut validation = Validation::new(algorithm);
+    validation.set_audience(&[tenant_id]);
+    validation.set_required_spec_claims(&["sub", "iat", "aud"]);
+    validation.validate_exp = true;
+
+    // Decode and validate the JWT
+    let token_data = decode::<ApiKeyClaims>(token, &decoding_key, &validation).map_err(|e| {
+        warn!("API key validation failed: {}", e);
+        (StatusCode::UNAUTHORIZED, "Invalid API key".to_string())
+    })?;
+
+    // Verify it's an API key token (not a regular access token)
+    if !token_data.claims.api_key {
+        warn!("Token is not an API key");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Token is not an API key".to_string(),
+        ));
+    }
+
+    // Extract key_id from sub claim
+    let key_id = &token_data.claims.sub;
+
+    // Fetch API key metadata from storage
+    let api_key_data = storage
+        .get_api_key(key_id)
+        .await
+        .map_err(|e| {
+            warn!("Failed to fetch API key from storage: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to fetch API key".to_string(),
+            )
+        })?
+        .ok_or_else(|| {
+            warn!("API key '{}' not found in storage", key_id);
+            (StatusCode::UNAUTHORIZED, "API key not found".to_string())
+        })?;
+
+    // Check if key is revoked
+    if api_key_data.revoked {
+        warn!("API key '{}' has been revoked", key_id);
+        return Err((StatusCode::UNAUTHORIZED, "API key has been revoked".to_string()));
+    }
+
+    // Check if key has expired
+    if let Some(expires_at) = api_key_data.expires_at {
+        if Utc::now() > expires_at {
+            warn!("API key '{}' has expired", key_id);
+            return Err((StatusCode::UNAUTHORIZED, "API key has expired".to_string()));
+        }
+    }
+
+    // Verify tenant_id matches
+    if api_key_data.tenant_id != tenant_id {
+        warn!(
+            "API key '{}' tenant mismatch: expected '{}', got '{}'",
+            key_id, tenant_id, api_key_data.tenant_id
+        );
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "API key tenant mismatch".to_string(),
+        ));
+    }
+
+    debug!("API key '{}' validated successfully", key_id);
+    Ok(api_key_data)
 }
 
 #[cfg(test)]

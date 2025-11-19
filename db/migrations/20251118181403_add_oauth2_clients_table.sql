@@ -9,10 +9,18 @@ CREATE TABLE oauth2_clients (
     redirect_uris TEXT[] NOT NULL DEFAULT '{}',
     allowed_scopes TEXT[] NOT NULL DEFAULT '{}',
     grant_types TEXT[] NOT NULL DEFAULT '{}',
+    response_types TEXT[] NOT NULL DEFAULT '{}',
     client_type VARCHAR(20) NOT NULL DEFAULT 'confidential',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    public_key_pem TEXT,
+    jwks_uri TEXT,
+    token_endpoint_auth_method VARCHAR(50),
+    backchannel_logout_uri TEXT,
+    backchannel_logout_session_required BOOLEAN NOT NULL DEFAULT FALSE,
+    frontchannel_logout_uri TEXT,
+    frontchannel_logout_session_required BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT oauth2_clients_client_type_check CHECK (client_type IN ('confidential', 'public'))
 );
 

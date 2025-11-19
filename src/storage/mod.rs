@@ -236,6 +236,9 @@ pub struct OAuth2ClientData {
     pub redirect_uris: Vec<String>,
     pub allowed_scopes: Vec<String>,
     pub grant_types: Vec<String>,
+    /// Response types supported by this client (e.g., "code", "token", "id_token")
+    #[serde(default)]
+    pub response_types: Vec<String>,
     pub client_type: OAuth2ClientType,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -246,6 +249,9 @@ pub struct OAuth2ClientData {
     /// JWKS URI for retrieving client's public keys
     #[serde(default)]
     pub jwks_uri: Option<String>,
+    /// JWKS keys (parsed from jwks_uri or provided inline) - stores multiple keys
+    #[serde(default)]
+    pub jwks_keys: Option<Vec<serde_json::Value>>,
     /// Token endpoint authentication method (client_secret_post, client_secret_basic, private_key_jwt, etc.)
     #[serde(default)]
     pub token_endpoint_auth_method: Option<String>,
@@ -255,6 +261,12 @@ pub struct OAuth2ClientData {
     /// Whether backchannel_logout_uri requires session_id (sid) claim
     #[serde(default)]
     pub backchannel_logout_session_required: bool,
+    /// Front-channel logout URI (OIDC Front-Channel Logout) - embedded iframe for logout
+    #[serde(default)]
+    pub frontchannel_logout_uri: Option<String>,
+    /// Whether frontchannel_logout_uri requires session_id (sid) parameter
+    #[serde(default)]
+    pub frontchannel_logout_session_required: bool,
 }
 
 /// OAuth2 client type

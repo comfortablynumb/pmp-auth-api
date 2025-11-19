@@ -52,6 +52,18 @@ pub struct AuthorizeRequest {
     pub code_challenge: Option<String>,
     /// PKCE code challenge method: "plain" or "S256" (RFC 7636)
     pub code_challenge_method: Option<String>,
+    /// Session ID for authenticated user (optional - can also be provided via header or cookie)
+    pub session_id: Option<String>,
+    /// OAuth2 response mode: "query" or "form_post" (default: "query")
+    pub response_mode: Option<String>,
+    /// OIDC prompt parameter: "none", "login", "consent", or "select_account"
+    pub prompt: Option<String>,
+    /// OIDC max_age: Maximum authentication age in seconds
+    pub max_age: Option<u64>,
+    /// OIDC acr_values: Space-separated Authentication Context Class References
+    pub acr_values: Option<String>,
+    /// OIDC claims: Requested claims in JSON format
+    pub claims: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -184,6 +196,7 @@ pub struct LogoutResponse {
 pub async fn oauth2_authorize(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<AuthorizeRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     info!(
@@ -207,15 +220,35 @@ pub async fn oauth2_authorize(
         )
     })?;
 
-    // Validate response_type
-    if params.response_type != "code" {
+    // Validate response_type - support authorization code and hybrid flows
+    // Supported: "code", "code id_token", "code token", "code id_token token"
+    let response_type_parts: Vec<&str> = params.response_type.split_whitespace().collect();
+    let has_code = response_type_parts.contains(&"code");
+    let has_id_token = response_type_parts.contains(&"id_token");
+    let has_token = response_type_parts.contains(&"token");
+
+    // Must have "code" for authorization code and hybrid flows
+    if !has_code {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": "unsupported_response_type",
-                "error_description": "Only 'code' response type is supported"
+                "error_description": "response_type must include 'code'"
             })),
         ));
+    }
+
+    // Validate no unknown response types
+    for part in &response_type_parts {
+        if !["code", "id_token", "token"].contains(part) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "unsupported_response_type",
+                    "error_description": format!("Unknown response_type value: {}", part)
+                })),
+            ));
+        }
     }
 
     // Validate grant type is supported
@@ -272,41 +305,212 @@ pub async fn oauth2_authorize(
         }
     }
 
+    // Validate requested scopes against client's allowed scopes
+    if let Some(ref client_data) = client {
+        if let Some(ref scope_str) = params.scope {
+            let requested_scopes: Vec<String> = scope_str
+                .split_whitespace()
+                .map(String::from)
+                .collect();
+
+            validate_scopes(&requested_scopes, &client_data.allowed_scopes)?;
+        }
+    }
+
     // In a real implementation, this would:
     // 1. Authenticate the user via the identity backend
     // 2. Show a consent screen
     // 3. Generate an authorization code after consent
     //
-    // For testing/demo purposes, we use a mock user from the identity backend
-    // In production, you would:
-    // - Check for existing session (cookie/token)
-    // - If no session, redirect to login page
-    // - After login, show consent screen
-    // - After consent, create authorization code
+    // Check for authenticated session
+    // Session ID can be provided via:
+    // 1. Cookie (session_id)
+    // 2. Query parameter (session_id) - for testing
+    // 3. Header (X-Session-ID)
 
-    // For now, we'll use the first user from the mock backend or a default mock user
-    let backend = create_identity_backend(&tenant.identity_backend);
-    let user = backend
-        .get_user_by_email("demo@example.com")
-        .or_else(|_| backend.get_user_by_email("user@example.com"))
-        .or_else(|_| backend.get_user_by_email("test@example.com"))
+    let session_id = headers
+        .get("x-session-id")
+        .and_then(|h| h.to_str().ok())
+        .or_else(|| params.session_id.as_deref());
+
+    // Handle OIDC prompt parameter
+    if let Some(ref prompt) = params.prompt {
+        match prompt.as_str() {
+            "none" => {
+                // Must not display any authentication or consent UI
+                // If user is not authenticated, must return error
+                if session_id.is_none() {
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "login_required",
+                            "error_description": "User is not authenticated and prompt=none was specified"
+                        })),
+                    ));
+                }
+            }
+            "login" => {
+                // Force re-authentication
+                // In a full implementation, this would invalidate the current session
+                // and require the user to authenticate again
+                info!("prompt=login requested - re-authentication should be required");
+                // For now, we'll require a fresh session (implemented below with max_age check)
+            }
+            "consent" => {
+                // Show consent screen
+                // In a full implementation, this would show a consent UI
+                info!("prompt=consent requested - consent screen should be shown");
+            }
+            "select_account" => {
+                // Show account selection screen
+                info!("prompt=select_account requested - account selection should be shown");
+            }
+            _ => {
+                // Unknown prompt value - ignore per spec
+                warn!("Unknown prompt value: {}", prompt);
+            }
+        }
+    }
+
+    if session_id.is_none() {
+        info!("No session found for authorization request. Authentication required.");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "login_required",
+                "error_description": "User must authenticate before authorizing. Please login first and provide session_id."
+            })),
+        ));
+    }
+
+    let session_id = session_id.unwrap();
+
+    // Retrieve session from storage
+    let session = state
+        .storage
+        .get_session(session_id)
+        .await
         .map_err(|e| {
-            warn!("Failed to get user from identity backend: {}", e);
-            info!(
-                "No demo user found. Please configure a user in your identity backend or implement proper authentication flow."
-            );
+            warn!("Failed to retrieve session: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "server_error",
+                    "error_description": "Failed to retrieve session"
+                })),
+            )
+        })?
+        .ok_or_else(|| {
+            info!("Session '{}' not found", session_id);
             (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
-                    "error": "authentication_required",
-                    "error_description": "User authentication required. Please implement login flow."
+                    "error": "invalid_session",
+                    "error_description": "Session not found or expired. Please login again."
                 })),
             )
         })?;
 
+    // Verify session hasn't expired
+    if Utc::now() > session.expires_at {
+        warn!("Session '{}' has expired", session_id);
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "session_expired",
+                "error_description": "Session has expired. Please login again."
+            })),
+        ));
+    }
+
+    // Handle OIDC max_age parameter
+    // If max_age is specified, verify that authentication time is recent enough
+    if let Some(max_age) = params.max_age {
+        let auth_time = session.created_at;
+        let auth_age = Utc::now().signed_duration_since(auth_time).num_seconds() as u64;
+
+        if auth_age > max_age {
+            warn!(
+                "Session '{}' authentication is too old: {} seconds (max_age: {})",
+                session_id, auth_age, max_age
+            );
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": "login_required",
+                    "error_description": format!(
+                        "Authentication is too old. Please re-authenticate. (age: {}s, max: {}s)",
+                        auth_age, max_age
+                    )
+                })),
+            ));
+        }
+    }
+
+    // Verify tenant matches
+    if session.tenant_id != tenant_id {
+        warn!(
+            "Session tenant mismatch: session tenant '{}' != requested tenant '{}'",
+            session.tenant_id, tenant_id
+        );
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "tenant_mismatch",
+                "error_description": "Session does not belong to this tenant"
+            })),
+        ));
+    }
+
+    // Get user from storage using session's user_id
+    let user_id = session.user_id.clone().ok_or_else(|| {
+        warn!("Session '{}' does not have a user_id", session_id);
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": "invalid_session",
+                "error_description": "Session is not associated with a user"
+            })),
+        )
+    })?;
+
+    let user = state
+        .storage
+        .get_user(&user_id)
+        .await
+        .map_err(|e| {
+            warn!("Failed to retrieve user '{}': {}", user_id, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "server_error",
+                    "error_description": "Failed to retrieve user"
+                })),
+            )
+        })?
+        .ok_or_else(|| {
+            warn!("User '{}' not found in storage", user_id);
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": "user_not_found",
+                    "error_description": "User not found"
+                })),
+            )
+        })?;
+
+    let backend_user = BackendUser {
+        id: user.id.clone(),
+        email: user.email.clone(),
+        name: user.name.clone(),
+        picture: user.picture.clone(),
+        role: UserRole::from_str(&user.role).unwrap_or(UserRole::User),
+        attributes: user.attributes.clone(),
+    };
+
     info!(
         "User authenticated for OAuth2 flow: {} ({})",
-        user.id, user.email
+        backend_user.id, backend_user.email
     );
 
     let auth_code = Uuid::new_v4().to_string();
@@ -315,7 +519,7 @@ pub async fn oauth2_authorize(
     let code_data = StorageAuthCodeData {
         tenant_id: tenant_id.clone(),
         client_id: params.client_id.clone(),
-        user_id: user.id.clone(),
+        user_id: backend_user.id.clone(),
         redirect_uri: params.redirect_uri.clone(),
         scope: params
             .scope
@@ -345,14 +549,185 @@ pub async fn oauth2_authorize(
             )
         })?;
 
-    // Build redirect URL
-    let mut redirect_url = format!("{}?code={}", params.redirect_uri, auth_code);
-    if let Some(state) = params.state {
-        redirect_url.push_str(&format!("&state={}", state));
+    // Generate session_state for OIDC session management
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let salt = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
+
+    // Extract origin from redirect_uri
+    let origin = params
+        .redirect_uri
+        .split('/')
+        .take(3)
+        .collect::<Vec<&str>>()
+        .join("/");
+
+    let session_state = generate_session_state(&params.client_id, &origin, &session_id, &salt);
+
+    // For hybrid flows, generate tokens immediately if needed
+    let mut access_token_for_response: Option<String> = None;
+    let mut id_token_for_response: Option<String> = None;
+
+    if has_token || has_id_token {
+        // Need to generate user context for tokens
+        // Fetch actual user from storage backend
+        let user = state
+            .storage
+            .get_user(&backend_user.id)
+            .await
+            .map_err(|e| {
+                warn!("Failed to fetch user '{}' from storage: {}", backend_user.id, e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "server_error", "error_description": "Failed to fetch user information"})),
+                )
+            })?
+            .ok_or_else(|| {
+                warn!("User '{}' not found in storage", backend_user.id);
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "invalid_grant", "error_description": "User not found"})),
+                )
+            })?;
+
+        let scope_vec: Vec<String> = params
+            .scope
+            .as_deref()
+            .unwrap_or("")
+            .split_whitespace()
+            .map(String::from)
+            .collect();
+
+        // Generate access token if requested
+        if has_token {
+            let token = generate_access_token(
+                &user.id,
+                &user.email,
+                crate::models::UserRole::from_str(&user.role).unwrap_or(crate::models::UserRole::User),
+                &scope_vec,
+                &tenant_id,
+                &params.client_id,
+                oauth2_config,
+            )?;
+            access_token_for_response = Some(token);
+        }
+
+        // Generate ID token if requested and OIDC enabled
+        if has_id_token {
+            if let Some(oidc_config) = &tenant.identity_provider.oidc {
+                if scope_vec.contains(&"openid".to_string()) {
+                    let token = crate::auth::oidc::generate_id_token(
+                        &user.id,
+                        &user.email,
+                        user.name.clone(),
+                        &params.client_id,
+                        params.nonce.clone(),
+                        access_token_for_response.as_deref(), // Include at_hash if access_token generated
+                        Some(&auth_code),                     // Include c_hash for hybrid flow
+                        None,                                 // acr
+                        Some(vec!["pwd".to_string()]),        // amr
+                        oauth2_config,
+                        oidc_config,
+                    )?;
+                    id_token_for_response = Some(token);
+                }
+            }
+        }
     }
 
-    debug!("Redirecting to: {}", redirect_url);
-    Ok(Redirect::temporary(&redirect_url).into_response())
+    // Check response_mode
+    // For hybrid flows with tokens, use fragment mode by default if not specified
+    let response_mode = if (has_token || has_id_token) && params.response_mode.is_none() {
+        "fragment"
+    } else {
+        params.response_mode.as_deref().unwrap_or("query")
+    };
+
+    match response_mode {
+        "form_post" => {
+            // Return HTML form that auto-posts to redirect_uri
+            let mut form_inputs = vec![
+                format!(r#"<input type="hidden" name="code" value="{}" />"#, auth_code)
+            ];
+
+            if let Some(ref state) = params.state {
+                form_inputs.push(format!(r#"<input type="hidden" name="state" value="{}" />"#, state));
+            }
+
+            if let Some(ref id_token) = id_token_for_response {
+                form_inputs.push(format!(r#"<input type="hidden" name="id_token" value="{}" />"#, id_token));
+            }
+
+            if let Some(ref access_token) = access_token_for_response {
+                form_inputs.push(format!(r#"<input type="hidden" name="access_token" value="{}" />"#, access_token));
+                form_inputs.push(r#"<input type="hidden" name="token_type" value="Bearer" />"#.to_string());
+                form_inputs.push(format!(
+                    r#"<input type="hidden" name="expires_in" value="{}" />"#,
+                    oauth2_config.access_token_expiration_secs
+                ));
+            }
+
+            form_inputs.push(format!(r#"<input type="hidden" name="session_state" value="{}" />"#, session_state));
+
+            let form_html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Response</title>
+</head>
+<body onload="document.forms[0].submit()">
+    <form method="post" action="{}">
+        {}
+        <noscript>
+            <p>JavaScript is disabled. Click the button below to continue.</p>
+            <button type="submit">Continue</button>
+        </noscript>
+    </form>
+</body>
+</html>"#,
+                params.redirect_uri,
+                form_inputs.join("\n        ")
+            );
+
+            debug!("Returning form_post response to: {}", params.redirect_uri);
+            Ok(axum::response::Html(form_html).into_response())
+        }
+        "fragment" => {
+            // Fragment mode - tokens in URL fragment
+            let mut fragments = vec![format!("code={}", auth_code)];
+
+            if let Some(ref state) = params.state {
+                fragments.push(format!("state={}", state));
+            }
+
+            if let Some(ref id_token) = id_token_for_response {
+                fragments.push(format!("id_token={}", id_token));
+            }
+
+            if let Some(ref access_token) = access_token_for_response {
+                fragments.push(format!("access_token={}", access_token));
+                fragments.push("token_type=Bearer".to_string());
+                fragments.push(format!("expires_in={}", oauth2_config.access_token_expiration_secs));
+            }
+
+            fragments.push(format!("session_state={}", session_state));
+
+            let redirect_url = format!("{}#{}", params.redirect_uri, fragments.join("&"));
+
+            debug!("Redirecting to (fragment): {}", redirect_url);
+            Ok(Redirect::temporary(&redirect_url).into_response())
+        }
+        "query" | _ => {
+            // Query parameter mode (code only, no tokens)
+            let mut redirect_url = format!("{}?code={}", params.redirect_uri, auth_code);
+            if let Some(state) = params.state {
+                redirect_url.push_str(&format!("&state={}", state));
+            }
+            redirect_url.push_str(&format!("&session_state={}", session_state));
+
+            debug!("Redirecting to: {}", redirect_url);
+            Ok(Redirect::temporary(&redirect_url).into_response())
+        }
+    }
 }
 
 /// OAuth2 Token Endpoint
@@ -471,6 +846,77 @@ pub async fn oauth2_token(
 ///
 /// Supports both GET and POST methods for compatibility.
 /// Provides front-channel logout with optional redirect.
+
+/// Generate front-channel logout HTML with iframes for each client
+fn generate_frontchannel_logout_html(
+    clients: &[crate::storage::OAuth2ClientData],
+    session_id: Option<&str>,
+    post_logout_redirect_uri: Option<&str>,
+) -> String {
+    let mut iframes = String::new();
+
+    for client in clients {
+        if let Some(ref logout_uri) = client.frontchannel_logout_uri {
+            let mut url = logout_uri.clone();
+
+            // Add iss parameter (issuer) - required by OIDC front-channel logout
+            if !url.contains('?') {
+                url.push('?');
+            } else {
+                url.push('&');
+            }
+            url.push_str("iss=");
+            url.push_str(&urlencoding::encode(&client.tenant_id));
+
+            // Add sid (session ID) parameter if required and available
+            if client.frontchannel_logout_session_required {
+                if let Some(sid) = session_id {
+                    url.push_str("&sid=");
+                    url.push_str(&urlencoding::encode(sid));
+                }
+            }
+
+            iframes.push_str(&format!(
+                r#"    <iframe style="display:none" src="{}"></iframe>
+"#,
+                html_escape::encode_text(&url)
+            ));
+        }
+    }
+
+    // Generate redirect script if post_logout_redirect_uri is provided
+    let redirect_script = if let Some(redirect_uri) = post_logout_redirect_uri {
+        format!(
+            r#"
+    // Redirect after a short delay to allow iframes to load
+    setTimeout(function() {{
+        window.location.href = "{}";
+    }}, 1000);
+"#,
+            html_escape::encode_text(redirect_uri)
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Logging out...</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <h2>Logging out...</h2>
+    <p>Please wait while we sign you out from all applications.</p>
+{}    <script>
+{}    </script>
+</body>
+</html>"#,
+        iframes, redirect_script
+    )
+}
+
 ///
 /// Send back-channel logout notifications to all registered clients
 /// This is called internally when a user logs out to notify all relying parties
@@ -727,7 +1173,7 @@ pub async fn oauth2_logout(
         info!("Redirecting after logout to: {}", redirect_url);
 
         // Trigger backchannel logout in background (non-blocking)
-        if let Some(user_id) = user_id_for_logout {
+        if let Some(user_id) = user_id_for_logout.clone() {
             let state_clone = state.clone();
             let tenant_clone = tenant.clone();
             let tenant_id_clone = tenant_id.clone();
@@ -744,11 +1190,32 @@ pub async fn oauth2_logout(
             });
         }
 
+        // Check for front-channel logout clients
+        if let Ok(clients) = state.storage.list_oauth2_clients(&tenant_id).await {
+            let frontchannel_clients: Vec<_> = clients
+                .into_iter()
+                .filter(|c| c.frontchannel_logout_uri.is_some())
+                .collect();
+
+            if !frontchannel_clients.is_empty() {
+                info!(
+                    "Generating front-channel logout HTML for {} client(s)",
+                    frontchannel_clients.len()
+                );
+                let html = generate_frontchannel_logout_html(
+                    &frontchannel_clients,
+                    session_id_for_logout.as_deref(),
+                    Some(&redirect_url),
+                );
+                return Ok(axum::response::Html(html).into_response());
+            }
+        }
+
         return Ok(Redirect::temporary(&redirect_url).into_response());
     }
 
     // Trigger backchannel logout in background (non-blocking)
-    if let Some(user_id) = user_id_for_logout {
+    if let Some(user_id) = user_id_for_logout.clone() {
         let state_clone = state.clone();
         let tenant_clone = tenant.clone();
         let tenant_id_clone = tenant_id.clone();
@@ -765,7 +1232,28 @@ pub async fn oauth2_logout(
         });
     }
 
-    // Return JSON response if no redirect
+    // Check for front-channel logout clients when no redirect_uri provided
+    if let Ok(clients) = state.storage.list_oauth2_clients(&tenant_id).await {
+        let frontchannel_clients: Vec<_> = clients
+            .into_iter()
+            .filter(|c| c.frontchannel_logout_uri.is_some())
+            .collect();
+
+        if !frontchannel_clients.is_empty() {
+            info!(
+                "Generating front-channel logout HTML for {} client(s)",
+                frontchannel_clients.len()
+            );
+            let html = generate_frontchannel_logout_html(
+                &frontchannel_clients,
+                session_id_for_logout.as_deref(),
+                None,
+            );
+            return Ok(axum::response::Html(html).into_response());
+        }
+    }
+
+    // Return JSON response if no redirect and no front-channel logout
     Ok(Json(LogoutResponse {
         message: "Logout successful".to_string(),
     })
@@ -978,6 +1466,10 @@ async fn handle_authorization_code_grant(
                 user.name.clone(),
                 &code_data.client_id,
                 code_data.nonce.clone(),
+                Some(&access_token), // Include at_hash in ID token
+                None,                // No c_hash needed for token endpoint
+                None,                // acr - can be set based on auth strength
+                Some(vec!["pwd".to_string()]), // amr - password authentication
                 oauth2_config,
                 oidc_config,
             )?)
@@ -1160,11 +1652,41 @@ async fn handle_refresh_token_grant(
         oauth2_config,
     )?;
 
+    // Implement refresh token rotation (RFC 6749 Security Best Practices)
+    // Generate a new refresh token
+    let new_refresh_token = generate_refresh_token(
+        &user.id,
+        &user.email,
+        user.role,
+        &scope_vec,
+        tenant_id,
+        &token_data.client_id,
+        oauth2_config,
+        state,
+    )
+    .await?;
+
+    // Invalidate the old refresh token to prevent reuse
+    state
+        .storage
+        .delete_refresh_token(&refresh_token)
+        .await
+        .map_err(|e| {
+            warn!("Failed to delete old refresh token: {}", e);
+            // Continue even if deletion fails - the new token is already issued
+        })
+        .ok();
+
+    info!(
+        "Refresh token rotated for user '{}' (tenant: {})",
+        user.id, tenant_id
+    );
+
     Ok(Json(TokenResponse {
         access_token,
         token_type: "Bearer".to_string(),
         expires_in: oauth2_config.access_token_expiration_secs,
-        refresh_token: Some(refresh_token), // Return the same refresh token
+        refresh_token: Some(new_refresh_token), // Return new refresh token (rotation)
         scope: Some(token_data.scope),
         id_token: None, // ID tokens are only issued during initial authorization
     }))
@@ -1769,6 +2291,21 @@ fn read_der_integer(der: &[u8], mut i: usize) -> Result<(Vec<u8>, usize), String
     Ok((bytes, end))
 }
 
+/// Generate session_state parameter (OIDC Session Management)
+/// Format: SHA256(client_id + origin + session_id + salt)
+fn generate_session_state(client_id: &str, origin: &str, session_id: &str, salt: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use sha2::{Digest, Sha256};
+
+    let input = format!("{}{}{}{}", client_id, origin, session_id, salt);
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let hash = hasher.finalize();
+    let hash_b64 = URL_SAFE_NO_PAD.encode(hash);
+
+    format!("{}.{}", hash_b64, salt)
+}
+
 /// Validate PKCE code_verifier against code_challenge (RFC 7636)
 fn validate_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> bool {
     match method {
@@ -1871,8 +2408,73 @@ async fn validate_client_assertion(
             )
         }
         Algorithm::RS256 => {
-            // RSA signature with public key
-            let public_key_pem = client.public_key_pem.as_ref().ok_or_else(|| {
+            // RSA signature with public key - support multiple keys via kid
+            let public_key_pem = if let Some(kid) = &header.kid {
+                // kid specified - must find exact match in jwks_keys
+                if let Some(jwks_keys) = &client.jwks_keys {
+                    // Find key by kid in JWKS keys
+                    let matching_key = jwks_keys.iter()
+                        .find(|key| {
+                            key.get("kid")
+                                .and_then(|k| k.as_str())
+                                .map(|k| k == kid)
+                                .unwrap_or(false)
+                        })
+                        .ok_or_else(|| {
+                            warn!("Client '{}' JWT has kid '{}' but no matching key found", client_id, kid);
+                            (
+                                StatusCode::UNAUTHORIZED,
+                                Json(json!({
+                                    "error": "invalid_client",
+                                    "error_description": format!("No key found with kid '{}'", kid)
+                                })),
+                            )
+                        })?;
+
+                    // Extract RSA public key components from JWK
+                    let n = matching_key.get("n").and_then(|v| v.as_str()).ok_or_else(|| {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "invalid_client",
+                                "error_description": "RSA key must have 'n' (modulus)"
+                            })),
+                        )
+                    })?;
+
+                    let e = matching_key.get("e").and_then(|v| v.as_str()).ok_or_else(|| {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "invalid_client",
+                                "error_description": "RSA key must have 'e' (exponent)"
+                            })),
+                        )
+                    })?;
+
+                    // Store as JSON for now (same format as public_key_pem field)
+                    Some(json!({
+                        "kty": "RSA",
+                        "n": n,
+                        "e": e,
+                        "kid": kid,
+                    }).to_string())
+                } else {
+                    // kid specified but client has no jwks_keys - error
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Client has no JWKS keys configured"
+                        })),
+                    ));
+                }
+            } else {
+                // No kid - use public_key_pem for backward compatibility
+                client.public_key_pem.clone()
+            };
+
+            let public_key_pem = public_key_pem.ok_or_else(|| {
                 warn!(
                     "Client '{}' has no public key for RS256 JWT validation",
                     client_id
@@ -1886,24 +2488,148 @@ async fn validate_client_assertion(
                 )
             })?;
 
-            let key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
-                warn!(
-                    "Failed to parse RSA public key for client '{}': {}",
-                    client_id, e
-                );
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({
-                        "error": "invalid_client",
-                        "error_description": "Invalid RSA public key format"
-                    })),
-                )
-            })?;
+            // Parse the JWK format and convert to RSA components for DecodingKey
+            let key = if public_key_pem.starts_with('{') {
+                // It's in JWK JSON format - extract components
+                let jwk: serde_json::Value = serde_json::from_str(&public_key_pem).map_err(|e| {
+                    warn!("Failed to parse JWK for client '{}': {}", client_id, e);
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid JWK format"
+                        })),
+                    )
+                })?;
+
+                let n = jwk.get("n").and_then(|v| v.as_str()).ok_or_else(|| {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "JWK missing 'n' component"
+                        })),
+                    )
+                })?;
+
+                let e = jwk.get("e").and_then(|v| v.as_str()).ok_or_else(|| {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "JWK missing 'e' component"
+                        })),
+                    )
+                })?;
+
+                DecodingKey::from_rsa_components(n, e).map_err(|e| {
+                    warn!("Failed to create RSA key from JWK components for client '{}': {}", client_id, e);
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid RSA key components"
+                        })),
+                    )
+                })?
+            } else {
+                // It's in PEM format
+                DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
+                    warn!(
+                        "Failed to parse RSA public key for client '{}': {}",
+                        client_id, e
+                    );
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid RSA public key format"
+                        })),
+                    )
+                })?
+            };
+
             (Algorithm::RS256, key)
         }
         Algorithm::ES256 => {
-            // ECDSA signature with public key
-            let public_key_pem = client.public_key_pem.as_ref().ok_or_else(|| {
+            // ECDSA signature with public key - support multiple keys via kid
+            let public_key_pem = if let Some(kid) = &header.kid {
+                // kid specified - must find exact match in jwks_keys
+                if let Some(jwks_keys) = &client.jwks_keys {
+                    // Find key by kid in JWKS keys
+                    let matching_key = jwks_keys.iter()
+                        .find(|key| {
+                            key.get("kid")
+                                .and_then(|k| k.as_str())
+                                .map(|k| k == kid)
+                                .unwrap_or(false)
+                        })
+                        .ok_or_else(|| {
+                            warn!("Client '{}' JWT has kid '{}' but no matching key found", client_id, kid);
+                            (
+                                StatusCode::UNAUTHORIZED,
+                                Json(json!({
+                                    "error": "invalid_client",
+                                    "error_description": format!("No key found with kid '{}'", kid)
+                                })),
+                            )
+                        })?;
+
+                    // Extract EC public key components from JWK
+                    let crv = matching_key.get("crv").and_then(|v| v.as_str()).ok_or_else(|| {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "invalid_client",
+                                "error_description": "EC key must have 'crv' (curve)"
+                            })),
+                        )
+                    })?;
+
+                    let x = matching_key.get("x").and_then(|v| v.as_str()).ok_or_else(|| {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "invalid_client",
+                                "error_description": "EC key must have 'x' coordinate"
+                            })),
+                        )
+                    })?;
+
+                    let y = matching_key.get("y").and_then(|v| v.as_str()).ok_or_else(|| {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "invalid_client",
+                                "error_description": "EC key must have 'y' coordinate"
+                            })),
+                        )
+                    })?;
+
+                    // Store as JSON for now (same format as public_key_pem field)
+                    Some(json!({
+                        "kty": "EC",
+                        "crv": crv,
+                        "x": x,
+                        "y": y,
+                        "kid": kid,
+                    }).to_string())
+                } else {
+                    // kid specified but client has no jwks_keys - error
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Client has no JWKS keys configured"
+                        })),
+                    ));
+                }
+            } else {
+                // No kid - use public_key_pem for backward compatibility
+                client.public_key_pem.clone()
+            };
+
+            let public_key_pem = public_key_pem.ok_or_else(|| {
                 warn!(
                     "Client '{}' has no public key for ES256 JWT validation",
                     client_id
@@ -1917,19 +2643,67 @@ async fn validate_client_assertion(
                 )
             })?;
 
-            let key = DecodingKey::from_ec_pem(public_key_pem.as_bytes()).map_err(|e| {
-                warn!(
-                    "Failed to parse EC public key for client '{}': {}",
-                    client_id, e
-                );
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({
-                        "error": "invalid_client",
-                        "error_description": "Invalid EC public key format"
-                    })),
-                )
-            })?;
+            // Parse the JWK format and convert to EC components for DecodingKey
+            let key = if public_key_pem.starts_with('{') {
+                // It's in JWK JSON format - extract components
+                let jwk: serde_json::Value = serde_json::from_str(&public_key_pem).map_err(|e| {
+                    warn!("Failed to parse JWK for client '{}': {}", client_id, e);
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid JWK format"
+                        })),
+                    )
+                })?;
+
+                let x = jwk.get("x").and_then(|v| v.as_str()).ok_or_else(|| {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "JWK missing 'x' component"
+                        })),
+                    )
+                })?;
+
+                let y = jwk.get("y").and_then(|v| v.as_str()).ok_or_else(|| {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "JWK missing 'y' component"
+                        })),
+                    )
+                })?;
+
+                DecodingKey::from_ec_components(x, y).map_err(|e| {
+                    warn!("Failed to create EC key from JWK components for client '{}': {}", client_id, e);
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid EC key components"
+                        })),
+                    )
+                })?
+            } else {
+                // It's in PEM format
+                DecodingKey::from_ec_pem(public_key_pem.as_bytes()).map_err(|e| {
+                    warn!(
+                        "Failed to parse EC public key for client '{}': {}",
+                        client_id, e
+                    );
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({
+                            "error": "invalid_client",
+                            "error_description": "Invalid EC public key format"
+                        })),
+                    )
+                })?
+            };
+
             (Algorithm::ES256, key)
         }
         other => {

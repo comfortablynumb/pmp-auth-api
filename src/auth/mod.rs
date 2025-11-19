@@ -4,6 +4,7 @@ pub mod client_registration;
 pub mod device_flow;
 pub mod identity_backend;
 pub mod oauth2;
+pub mod oauth2_federation;
 pub mod oauth2_server;
 pub mod oidc;
 pub mod password;
@@ -17,8 +18,9 @@ pub use client_registration::{delete_client, get_client, register_client, update
 pub use device_flow::{device_authorize, device_confirm, device_token, device_verify};
 #[allow(unused_imports)]
 pub use identity_backend::{create_identity_backend, BackendUser, IdentityBackendTrait};
+pub use oauth2_federation::{federation_authorize, federation_callback};
 pub use oauth2_server::{jwks, oauth2_authorize, oauth2_logout, oauth2_token};
-pub use oidc::{oidc_discovery, oidc_userinfo};
+pub use oidc::{check_session_iframe, oidc_discovery, oidc_userinfo};
 pub use saml::{saml_metadata, saml_slo, saml_sso_post, saml_sso_redirect};
 pub use token_exchange::token_exchange;
 pub use token_introspection::{token_introspect, token_revoke};

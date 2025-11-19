@@ -685,12 +685,17 @@ cargo clippy -- -D warnings
 
 ### Database Setup (PostgreSQL)
 
-```bash
-# Create database
-createdb pmp_auth
+See the [Database Migrations Guide](db/README.md) for detailed instructions.
 
-# Run migrations
-psql pmp_auth < migrations/001_initial_schema.sql
+Quick start:
+
+```bash
+# Using Docker Compose (recommended)
+docker-compose up -d
+
+# Migrations run automatically via the database_migrations service
+# Check status:
+docker-compose run --rm database_migrations status
 ```
 
 ## Production Deployment

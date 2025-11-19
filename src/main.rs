@@ -14,7 +14,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 // Use library modules instead of duplicating them in the binary
-use pmp_auth_api::{admin, auth, config, handlers, metrics, models, storage, AppState};
+use pmp_auth_api::{admin, auth, config, handlers, metrics, middleware, models, storage, AppState};
 
 #[tokio::main]
 async fn main() {
@@ -111,7 +111,53 @@ async fn main() {
 
     // Add global middleware
     tracing::debug!("Adding global middleware (CORS, Tracing)");
-    let app = app.layer(CorsLayer::permissive()).layer(
+
+    // Collect all allowed origins from all tenants
+    let mut allowed_origins: Vec<String> = tenant_config
+        .tenants
+        .values()
+        .flat_map(|tenant| tenant.allowed_origins.clone())
+        .collect();
+
+    // Remove duplicates
+    allowed_origins.sort();
+    allowed_origins.dedup();
+
+    // Configure CORS based on tenant origins
+    let cors_layer = if allowed_origins.is_empty() {
+        tracing::warn!("No CORS origins configured for any tenant - using permissive CORS");
+        CorsLayer::permissive()
+    } else {
+        tracing::info!("Configuring CORS with {} allowed origins", allowed_origins.len());
+
+        use tower_http::cors::{Any, AllowOrigin};
+        use axum::http::{Method, HeaderValue};
+
+        // Parse origins into HeaderValue
+        let origin_values: Vec<HeaderValue> = allowed_origins
+            .iter()
+            .filter_map(|origin| HeaderValue::from_str(origin).ok())
+            .collect();
+
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origin_values))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::OPTIONS,
+                Method::PATCH,
+            ])
+            .allow_headers(Any)
+            .allow_credentials(true)
+    };
+
+    // Add security headers middleware
+    let app = app
+        .layer(axum::middleware::from_fn(middleware::security_headers::add_security_headers))
+        .layer(cors_layer)
+        .layer(
         TraceLayer::new_for_http()
             .make_span_with(|request: &Request<_>| {
                 let uri = request.uri().path();
@@ -242,6 +288,19 @@ fn create_tenant_routes(state: AppState) -> Router {
             get(auth::oidc_discovery),
         )
         .route("/:tenant_id/oauth/userinfo", get(auth::oidc_userinfo))
+        .route(
+            "/:tenant_id/oauth/check_session_iframe",
+            get(auth::check_session_iframe),
+        )
+        // OAuth2 Federation endpoints (external IdP integration)
+        .route(
+            "/:tenant_id/oauth/federation/authorize",
+            get(auth::federation_authorize),
+        )
+        .route(
+            "/:tenant_id/oauth/federation/callback",
+            get(auth::federation_callback),
+        )
         // API Key Management endpoints
         .route("/:tenant_id/api-keys/create", post(auth::create_api_key))
         .route("/:tenant_id/api-keys/list", get(auth::list_api_keys))

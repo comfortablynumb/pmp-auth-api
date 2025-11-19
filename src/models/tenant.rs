@@ -19,6 +19,9 @@ pub struct Tenant {
     /// Whether this tenant is active
     #[serde(default = "default_active")]
     pub active: bool,
+    /// Allowed CORS origins for this tenant
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 fn default_active() -> bool {
