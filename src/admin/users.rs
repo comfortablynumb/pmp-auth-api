@@ -3,39 +3,15 @@
 use super::{error_response, not_found, validation_error, AdminError};
 use crate::auth::password::hash_password;
 use crate::models::UserRole;
+use crate::storage::UserData;
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
-
-// In-memory user storage (TODO: Move to storage backend)
-use lazy_static::lazy_static;
-
-lazy_static! {
-    pub static ref USERS: Arc<Mutex<HashMap<String, User>>> = Arc::new(Mutex::new(HashMap::new()));
-}
-
-/// User metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: String,
-    pub tenant_id: String,
-    pub email: String,
-    pub password_hash: String,
-    pub name: Option<String>,
-    pub picture: Option<String>,
-    pub role: UserRole,
-    pub active: bool,
-    pub email_verified: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub attributes: HashMap<String, String>,
-}
 
 /// List all users for a tenant
 /// GET /api/v1/admin/tenants/{tenant_id}/users
@@ -51,29 +27,32 @@ pub async fn list_users(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let users = USERS.lock().map_err(|e| {
+    let users = state.storage.list_users(&tenant_id).await.map_err(|e| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock users: {}", e),
+            "storage_error",
+            &format!("Failed to list users: {}", e),
         )
     })?;
 
     let tenant_users: Vec<UserResponse> = users
-        .values()
-        .filter(|u| u.tenant_id == tenant_id)
-        .map(|u| UserResponse {
-            id: u.id.clone(),
-            tenant_id: u.tenant_id.clone(),
-            email: u.email.clone(),
-            name: u.name.clone(),
-            picture: u.picture.clone(),
-            role: u.role,
-            active: u.active,
-            email_verified: u.email_verified,
-            created_at: u.created_at,
-            updated_at: u.updated_at,
-            attributes: u.attributes.clone(),
+        .into_iter()
+        .map(|u| {
+            let role = UserRole::from_str(&u.role).unwrap_or(UserRole::User);
+
+            UserResponse {
+                id: u.id,
+                tenant_id: u.tenant_id,
+                email: u.email,
+                name: u.name,
+                picture: u.picture,
+                role,
+                active: u.active,
+                email_verified: u.email_verified,
+                created_at: u.created_at,
+                updated_at: u.updated_at,
+                attributes: u.attributes,
+            }
         })
         .collect();
 
@@ -102,16 +81,17 @@ pub async fn get_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let users = USERS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock users: {}", e),
-        )
-    })?;
-
-    let user = users
-        .get(&user_id)
+    let user = state
+        .storage
+        .get_user(&user_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get user: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("User", &user_id))?;
 
     // Verify user belongs to tenant
@@ -124,18 +104,20 @@ pub async fn get_user(
         user_id, tenant_id
     );
 
+    let role = UserRole::from_str(&user.role).unwrap_or(UserRole::User);
+
     Ok(Json(UserResponse {
-        id: user.id.clone(),
-        tenant_id: user.tenant_id.clone(),
-        email: user.email.clone(),
-        name: user.name.clone(),
-        picture: user.picture.clone(),
-        role: user.role,
+        id: user.id,
+        tenant_id: user.tenant_id,
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        role,
         active: user.active,
         email_verified: user.email_verified,
         created_at: user.created_at,
         updated_at: user.updated_at,
-        attributes: user.attributes.clone(),
+        attributes: user.attributes,
     }))
 }
 
@@ -165,21 +147,19 @@ pub async fn create_user(
     }
 
     // Check if user with email already exists
-    {
-        let users = USERS.lock().map_err(|e| {
+    if let Some(_existing) = state
+        .storage
+        .get_user_by_email(&tenant_id, &request.email)
+        .await
+        .map_err(|e| {
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "lock_error",
-                &format!("Failed to lock users: {}", e),
+                "storage_error",
+                &format!("Failed to check existing user: {}", e),
             )
-        })?;
-
-        if users
-            .values()
-            .any(|u| u.tenant_id == tenant_id && u.email == request.email)
-        {
-            return Err(validation_error("User with this email already exists"));
-        }
+        })?
+    {
+        return Err(validation_error("User with this email already exists"));
     }
 
     // Hash password
@@ -193,15 +173,16 @@ pub async fn create_user(
 
     let user_id = format!("user_{}", Uuid::new_v4());
     let now = chrono::Utc::now();
+    let role = request.role.unwrap_or(UserRole::User);
 
-    let user = User {
+    let user = UserData {
         id: user_id.clone(),
         tenant_id: tenant_id.clone(),
         email: request.email.clone(),
         password_hash,
         name: request.name.clone(),
         picture: request.picture.clone(),
-        role: request.role.unwrap_or(UserRole::User),
+        role: role.to_string(),
         active: true,
         email_verified: request.email_verified.unwrap_or(false),
         created_at: now,
@@ -210,15 +191,17 @@ pub async fn create_user(
     };
 
     // Store user
-    let mut users = USERS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock users: {}", e),
-        )
-    })?;
-
-    users.insert(user_id.clone(), user.clone());
+    state
+        .storage
+        .store_user(&user_id, user.clone())
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to store user: {}", e),
+            )
+        })?;
 
     info!(
         "Admin API: Created user '{}' for tenant '{}'",
@@ -231,7 +214,7 @@ pub async fn create_user(
         email: user.email,
         name: user.name,
         picture: user.picture,
-        role: user.role,
+        role,
         active: user.active,
         email_verified: user.email_verified,
         created_at: user.created_at,
@@ -260,16 +243,17 @@ pub async fn update_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut users = USERS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock users: {}", e),
-        )
-    })?;
-
-    let user = users
-        .get_mut(&user_id)
+    let mut user = state
+        .storage
+        .get_user(&user_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get user: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("User", &user_id))?;
 
     // Verify user belongs to tenant
@@ -302,7 +286,7 @@ pub async fn update_user(
         user.picture = Some(picture);
     }
     if let Some(role) = request.role {
-        user.role = role;
+        user.role = role.to_string();
     }
     if let Some(active) = request.active {
         user.active = active;
@@ -316,23 +300,37 @@ pub async fn update_user(
 
     user.updated_at = chrono::Utc::now();
 
+    state
+        .storage
+        .update_user(&user_id, user.clone())
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to update user: {}", e),
+            )
+        })?;
+
     info!(
         "Admin API: Updated user '{}' for tenant '{}'",
         user_id, tenant_id
     );
 
+    let role = UserRole::from_str(&user.role).unwrap_or(UserRole::User);
+
     Ok(Json(UserResponse {
-        id: user.id.clone(),
-        tenant_id: user.tenant_id.clone(),
-        email: user.email.clone(),
-        name: user.name.clone(),
-        picture: user.picture.clone(),
-        role: user.role,
+        id: user.id,
+        tenant_id: user.tenant_id,
+        email: user.email,
+        name: user.name,
+        picture: user.picture,
+        role,
         active: user.active,
         email_verified: user.email_verified,
         created_at: user.created_at,
         updated_at: user.updated_at,
-        attributes: user.attributes.clone(),
+        attributes: user.attributes,
     }))
 }
 
@@ -353,16 +351,17 @@ pub async fn delete_user(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut users = USERS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock users: {}", e),
-        )
-    })?;
-
-    let user = users
-        .get(&user_id)
+    let user = state
+        .storage
+        .get_user(&user_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get user: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("User", &user_id))?;
 
     // Verify user belongs to tenant
@@ -370,7 +369,13 @@ pub async fn delete_user(
         return Err(not_found("User", &user_id));
     }
 
-    users.remove(&user_id);
+    state.storage.delete_user(&user_id).await.map_err(|e| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            &format!("Failed to delete user: {}", e),
+        )
+    })?;
 
     info!(
         "Admin API: Deleted user '{}' for tenant '{}'",

@@ -2,36 +2,17 @@
 // This module handles long-lived JWT tokens for machine-to-machine authentication
 
 use crate::models::ApiKeyConfig;
+use crate::storage::ApiKeyData;
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-
-// In-memory storage for API keys (in production, use a database)
-lazy_static::lazy_static! {
-    pub static ref API_KEYS: Arc<Mutex<HashMap<String, ApiKeyMetadata>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyMetadata {
-    pub id: String,
-    pub tenant_id: String,
-    pub name: String,
-    pub scopes: Vec<String>,
-    pub created_at: i64,
-    pub expires_at: Option<i64>, // None = no expiration
-    pub last_used: Option<i64>,
-    pub revoked: bool,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiKeyClaims {
@@ -134,22 +115,34 @@ pub async fn create_api_key(
     };
 
     // Create metadata
-    let metadata = ApiKeyMetadata {
+    let created_at_dt = DateTime::from_timestamp(now, 0).unwrap_or_else(|| Utc::now());
+    let expires_at_dt = expires_at.and_then(|ts| DateTime::from_timestamp(ts, 0));
+
+    let metadata = ApiKeyData {
         id: key_id.clone(),
         tenant_id: tenant_id.clone(),
         name: request.name.clone(),
         scopes: request.scopes.clone(),
-        created_at: now,
-        expires_at,
+        created_at: created_at_dt,
+        expires_at: expires_at_dt,
         last_used: None,
         revoked: false,
     };
 
     // Store metadata
-    {
-        let mut keys = API_KEYS.lock().unwrap();
-        keys.insert(key_id.clone(), metadata.clone());
-    }
+    state
+        .storage
+        .store_api_key(&key_id, metadata.clone())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "storage_error",
+                    "error_description": format!("Failed to store API key: {}", e)
+                })),
+            )
+        })?;
 
     // Generate the API key token
     let api_key_token = generate_api_key_token(
@@ -188,17 +181,25 @@ pub async fn list_api_keys(
         )
     })?;
 
-    let keys = API_KEYS.lock().unwrap();
+    let keys = state.storage.list_api_keys(&tenant_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "storage_error",
+                "error_description": format!("Failed to list API keys: {}", e)
+            })),
+        )
+    })?;
+
     let tenant_keys: Vec<ApiKeyInfo> = keys
-        .values()
-        .filter(|k| k.tenant_id == tenant_id)
+        .into_iter()
         .map(|k| ApiKeyInfo {
-            id: k.id.clone(),
-            name: k.name.clone(),
-            scopes: k.scopes.clone(),
-            created_at: k.created_at,
-            expires_at: k.expires_at,
-            last_used: k.last_used,
+            id: k.id,
+            name: k.name,
+            scopes: k.scopes,
+            created_at: k.created_at.timestamp(),
+            expires_at: k.expires_at.map(|dt| dt.timestamp()),
+            last_used: k.last_used.map(|dt| dt.timestamp()),
             revoked: k.revoked,
         })
         .collect();
@@ -222,9 +223,16 @@ pub async fn revoke_api_key(
         )
     })?;
 
-    // Revoke the key
-    let mut keys = API_KEYS.lock().unwrap();
-    let key = keys.get_mut(&key_id).ok_or_else(|| {
+    // Get the key
+    let mut key = state.storage.get_api_key(&key_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "storage_error",
+                "error_description": format!("Failed to get API key: {}", e)
+            })),
+        )
+    })?.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "api_key_not_found" })),
@@ -237,6 +245,16 @@ pub async fn revoke_api_key(
     }
 
     key.revoked = true;
+
+    state.storage.update_api_key(&key_id, key).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "storage_error",
+                "error_description": format!("Failed to revoke API key: {}", e)
+            })),
+        )
+    })?;
 
     info!("API key revoked: {}", key_id);
 
@@ -305,14 +323,14 @@ fn generate_api_key_token(
 pub fn validate_api_key(
     _token: &str,
     _tenant_id: &str,
-) -> Result<ApiKeyMetadata, (StatusCode, String)> {
+) -> Result<ApiKeyData, (StatusCode, String)> {
     // TODO: Decode and validate the JWT
     // For now, this is a placeholder
 
-    // Check if key is in storage and not revoked
-    let _keys = API_KEYS.lock().unwrap();
-
-    // In a real implementation, we'd decode the JWT and extract the key_id from sub claim
+    // In a real implementation, we'd:
+    // 1. Decode the JWT and extract the key_id from sub claim
+    // 2. Fetch from storage backend using state.storage.get_api_key(&key_id)
+    // 3. Check if key is not revoked and not expired
     // For now, we'll just return an error
     Err((
         StatusCode::UNAUTHORIZED,

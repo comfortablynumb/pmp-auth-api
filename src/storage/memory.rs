@@ -19,6 +19,8 @@ pub struct MemoryStorage {
     revoked_tokens: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
     oauth2_clients: Arc<Mutex<HashMap<String, OAuth2ClientData>>>,
     rate_limits: Arc<Mutex<HashMap<String, Vec<DateTime<Utc>>>>>,
+    users: Arc<Mutex<HashMap<String, UserData>>>,
+    email_to_user_id: Arc<Mutex<HashMap<(String, String), String>>>, // (tenant_id, email) -> user_id
 }
 
 impl MemoryStorage {
@@ -34,6 +36,8 @@ impl MemoryStorage {
             revoked_tokens: Arc::new(Mutex::new(HashMap::new())),
             oauth2_clients: Arc::new(Mutex::new(HashMap::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
+            users: Arc::new(Mutex::new(HashMap::new())),
+            email_to_user_id: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -458,6 +462,126 @@ impl StorageBackend for MemoryStorage {
         let attempts = rate_limits.entry(key.to_string()).or_insert_with(Vec::new);
         attempts.push(Utc::now());
         Ok(())
+    }
+
+    // User operations
+    async fn store_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError> {
+        let mut users = self
+            .users
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let mut email_mapping = self
+            .email_to_user_id
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let email_key = (data.tenant_id.clone(), data.email.clone());
+
+        if email_mapping.contains_key(&email_key) {
+            return Err(StorageError::AlreadyExists);
+        }
+
+        email_mapping.insert(email_key, user_id.to_string());
+        users.insert(user_id.to_string(), data);
+        Ok(())
+    }
+
+    async fn get_user(&self, user_id: &str) -> Result<Option<UserData>, StorageError> {
+        let users = self
+            .users
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        Ok(users.get(user_id).cloned())
+    }
+
+    async fn get_user_by_email(
+        &self,
+        tenant_id: &str,
+        email: &str,
+    ) -> Result<Option<UserData>, StorageError> {
+        let email_mapping = self
+            .email_to_user_id
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let email_key = (tenant_id.to_string(), email.to_string());
+
+        if let Some(user_id) = email_mapping.get(&email_key) {
+            let users = self
+                .users
+                .lock()
+                .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+            Ok(users.get(user_id).cloned())
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn list_users(&self, tenant_id: &str) -> Result<Vec<UserData>, StorageError> {
+        let users = self
+            .users
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        Ok(users
+            .values()
+            .filter(|user| user.tenant_id == tenant_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError> {
+        let mut users = self
+            .users
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        if !users.contains_key(user_id) {
+            return Err(StorageError::NotFound);
+        }
+
+        let mut email_mapping = self
+            .email_to_user_id
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        // Update email mapping if email changed
+        if let Some(old_user) = users.get(user_id) {
+            let old_email_key = (old_user.tenant_id.clone(), old_user.email.clone());
+            let new_email_key = (data.tenant_id.clone(), data.email.clone());
+
+            if old_email_key != new_email_key {
+                email_mapping.remove(&old_email_key);
+                email_mapping.insert(new_email_key, user_id.to_string());
+            }
+        }
+
+        users.insert(user_id.to_string(), data);
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<(), StorageError> {
+        let mut users = self
+            .users
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        if let Some(user_data) = users.remove(user_id) {
+            let mut email_mapping = self
+                .email_to_user_id
+                .lock()
+                .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+            let email_key = (user_data.tenant_id, user_data.email);
+            email_mapping.remove(&email_key);
+
+            Ok(())
+        } else {
+            Err(StorageError::NotFound)
+        }
     }
 }
 

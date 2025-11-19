@@ -1,51 +1,15 @@
 // Device Authorization Grant (RFC 8628)
 // For devices with limited input capabilities (smart TVs, IoT devices, etc.)
 
+use crate::storage::{DeviceCodeData, DeviceCodeStatus};
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
-
-// In-memory storage for device codes (TODO: Move to storage backend)
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref DEVICE_CODES: Arc<Mutex<HashMap<String, DeviceCodeData>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    static ref USER_CODE_TO_DEVICE_CODE: Arc<Mutex<HashMap<String, String>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-}
-
-/// Device code data
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct DeviceCodeData {
-    device_code: String,
-    user_code: String,
-    tenant_id: String,
-    client_id: String,
-    scope: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    status: DeviceCodeStatus,
-    user_id: Option<String>,
-}
-
-/// Device code status
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-enum DeviceCodeStatus {
-    Pending,
-    Authorized,
-    Denied,
-    Expired,
-}
 
 /// Device Authorization Request (RFC 8628)
 #[derive(Debug, Deserialize)]
@@ -141,30 +105,19 @@ pub async fn device_authorize(
         user_id: None,
     };
 
-    {
-        let mut codes = DEVICE_CODES.lock().map_err(|e| {
+    state
+        .storage
+        .store_device_code(&device_code, device_data)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "server_error",
-                    "error_description": format!("Failed to lock device codes: {}", e)
+                    "error_description": format!("Failed to store device code: {}", e)
                 })),
             )
         })?;
-
-        let mut mapping = USER_CODE_TO_DEVICE_CODE.lock().map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "server_error",
-                    "error_description": format!("Failed to lock user code mapping: {}", e)
-                })),
-            )
-        })?;
-
-        codes.insert(device_code.clone(), device_data);
-        mapping.insert(user_code.clone(), device_code.clone());
-    }
 
     // Build verification URI
     let base_url = tenant
@@ -224,29 +177,28 @@ pub async fn device_token(
     })?;
 
     // Get device code data
-    let device_data = {
-        let codes = DEVICE_CODES.lock().map_err(|e| {
+    let device_data = state
+        .storage
+        .get_device_code(&request.device_code)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "server_error",
-                    "error_description": format!("Failed to lock device codes: {}", e)
+                    "error_description": format!("Failed to get device code: {}", e)
+                })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid_grant",
+                    "error_description": "Invalid device code"
                 })),
             )
         })?;
-
-        codes.get(&request.device_code).cloned()
-    };
-
-    let device_data = device_data.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "invalid_grant",
-                "error_description": "Invalid device code"
-            })),
-        )
-    })?;
 
     // Verify client_id matches
     if device_data.client_id != request.client_id {
@@ -342,30 +294,19 @@ pub async fn device_token(
     let refresh_token = Uuid::new_v4().to_string();
 
     // Clean up device code (one-time use)
-    {
-        let mut codes = DEVICE_CODES.lock().map_err(|e| {
+    state
+        .storage
+        .delete_device_code(&request.device_code)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "server_error",
-                    "error_description": format!("Failed to lock device codes: {}", e)
+                    "error_description": format!("Failed to delete device code: {}", e)
                 })),
             )
         })?;
-
-        let mut mapping = USER_CODE_TO_DEVICE_CODE.lock().map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "server_error",
-                    "error_description": format!("Failed to lock user code mapping: {}", e)
-                })),
-            )
-        })?;
-
-        codes.remove(&request.device_code);
-        mapping.remove(&device_data.user_code);
-    }
 
     info!(
         "Device token issued for tenant '{}', user '{}'",
@@ -404,47 +345,21 @@ pub async fn device_verify(
         )
     })?;
 
-    // Get device code from user code
-    let device_code = {
-        let mapping = USER_CODE_TO_DEVICE_CODE.lock().map_err(|e| {
+    // Get device data by user code
+    let device_data = state
+        .storage
+        .get_device_code_by_user_code(&user_code)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "server_error",
-                    "error_description": format!("Failed to lock user code mapping: {}", e)
+                    "error_description": format!("Failed to get device code: {}", e)
                 })),
             )
-        })?;
-
-        mapping.get(&user_code).cloned()
-    };
-
-    let device_code = device_code.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error": "invalid_user_code",
-                "error_description": "Invalid or expired user code"
-            })),
-        )
-    })?;
-
-    // Get device data
-    let device_data = {
-        let codes = DEVICE_CODES.lock().map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "server_error",
-                    "error_description": format!("Failed to lock device codes: {}", e)
-                })),
-            )
-        })?;
-
-        codes.get(&device_code).cloned()
-    };
-
-    let device_data = device_data.ok_or_else(|| {
+        })?
+        .ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -500,64 +415,56 @@ pub async fn device_confirm(
         )
     })?;
 
-    // Get device code from user code
-    let device_code = {
-        let mapping = USER_CODE_TO_DEVICE_CODE.lock().map_err(|e| {
+    // Get device data by user code
+    let mut device_data = state
+        .storage
+        .get_device_code_by_user_code(&user_code)
+        .await
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "server_error",
-                    "error_description": format!("Failed to lock user code mapping: {}", e)
+                    "error_description": format!("Failed to get device code: {}", e)
                 })),
             )
-        })?;
-
-        mapping.get(&user_code).cloned()
-    };
-
-    let device_code = device_code.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error": "invalid_user_code",
-                "error_description": "Invalid or expired user code"
-            })),
-        )
-    })?;
-
-    // Update device code status
-    {
-        let mut codes = DEVICE_CODES.lock().map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "server_error",
-                    "error_description": format!("Failed to lock device codes: {}", e)
-                })),
-            )
-        })?;
-
-        let device_data = codes.get_mut(&device_code).ok_or_else(|| {
+        })?
+        .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
                 Json(json!({
                     "error": "invalid_user_code",
-                    "error_description": "Device code not found"
+                    "error_description": "Invalid or expired user code"
                 })),
             )
         })?;
 
-        // Update status and user_id
-        device_data.status = if request.authorized {
-            DeviceCodeStatus::Authorized
-        } else {
-            DeviceCodeStatus::Denied
-        };
+    // Update status and user_id
+    device_data.status = if request.authorized {
+        DeviceCodeStatus::Authorized
+    } else {
+        DeviceCodeStatus::Denied
+    };
 
-        if request.authorized {
-            device_data.user_id = Some(request.user_id.clone());
-        }
+    if request.authorized {
+        device_data.user_id = Some(request.user_id.clone());
     }
+
+    // Save updated device data
+    let device_code_id = device_data.device_code.clone();
+    state
+        .storage
+        .update_device_code(&device_code_id, device_data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "server_error",
+                    "error_description": format!("Failed to update device code: {}", e)
+                })),
+            )
+        })?;
 
     let status_text = if request.authorized {
         "authorized"

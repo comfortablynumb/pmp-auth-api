@@ -7,6 +7,23 @@ pub enum UserRole {
     Admin,
 }
 
+impl UserRole {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "user" => Some(UserRole::User),
+            "admin" => Some(UserRole::Admin),
+            _ => None,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            UserRole::User => "user".to_string(),
+            UserRole::Admin => "admin".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,    // Subject (user ID)

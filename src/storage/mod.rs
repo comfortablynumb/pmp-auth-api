@@ -132,6 +132,23 @@ pub trait StorageBackend: Send + Sync {
 
     /// Record a rate limit attempt
     async fn record_rate_limit_attempt(&self, key: &str) -> Result<(), StorageError>;
+
+    // User operations
+    async fn store_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError>;
+
+    async fn get_user(&self, user_id: &str) -> Result<Option<UserData>, StorageError>;
+
+    async fn get_user_by_email(
+        &self,
+        tenant_id: &str,
+        email: &str,
+    ) -> Result<Option<UserData>, StorageError>;
+
+    async fn list_users(&self, tenant_id: &str) -> Result<Vec<UserData>, StorageError>;
+
+    async fn update_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError>;
+
+    async fn delete_user(&self, user_id: &str) -> Result<(), StorageError>;
 }
 
 /// Authorization code data for OAuth2 flow
@@ -247,6 +264,23 @@ pub enum OAuth2ClientType {
     Confidential,
     /// Public client (cannot securely store secrets, e.g., SPAs, mobile apps)
     Public,
+}
+
+/// User data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserData {
+    pub id: String,
+    pub tenant_id: String,
+    pub email: String,
+    pub password_hash: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+    pub role: String,
+    pub active: bool,
+    pub email_verified: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub attributes: HashMap<String, String>,
 }
 
 /// Storage errors

@@ -866,4 +866,206 @@ impl StorageBackend for PostgresStorage {
         // Placeholder - would insert into rate_limit table
         Ok(())
     }
+
+    // User operations
+    async fn store_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError> {
+        let attributes_json = serde_json::to_value(&data.attributes).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize user attributes: {}", e))
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO users
+            (id, tenant_id, email, password_hash, name, picture, role, active, email_verified, created_at, updated_at, attributes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "#,
+        )
+        .bind(user_id)
+        .bind(&data.tenant_id)
+        .bind(&data.email)
+        .bind(&data.password_hash)
+        .bind(data.name.as_deref())
+        .bind(data.picture.as_deref())
+        .bind(&data.role)
+        .bind(data.active)
+        .bind(data.email_verified)
+        .bind(data.created_at)
+        .bind(data.updated_at)
+        .bind(attributes_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if let SqlxError::Database(db_err) = &e {
+                if db_err.is_unique_violation() {
+                    return StorageError::AlreadyExists;
+                }
+            }
+            StorageError::ConnectionError(format!("Failed to store user: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_user(&self, user_id: &str) -> Result<Option<UserData>, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT id, tenant_id, email, password_hash, name, picture, role, active, email_verified, created_at, updated_at, attributes
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to get user: {}", e)))?;
+
+        Ok(result.map(|row| {
+            let attributes_json: serde_json::Value = row.get("attributes");
+            let attributes: HashMap<String, String> =
+                serde_json::from_value(attributes_json).unwrap_or_else(|_| HashMap::new());
+
+            UserData {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                email: row.get("email"),
+                password_hash: row.get("password_hash"),
+                name: row.get("name"),
+                picture: row.get("picture"),
+                role: row.get("role"),
+                active: row.get("active"),
+                email_verified: row.get("email_verified"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                attributes,
+            }
+        }))
+    }
+
+    async fn get_user_by_email(
+        &self,
+        tenant_id: &str,
+        email: &str,
+    ) -> Result<Option<UserData>, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT id, tenant_id, email, password_hash, name, picture, role, active, email_verified, created_at, updated_at, attributes
+            FROM users
+            WHERE tenant_id = $1 AND email = $2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get user by email: {}", e))
+        })?;
+
+        Ok(result.map(|row| {
+            let attributes_json: serde_json::Value = row.get("attributes");
+            let attributes: HashMap<String, String> =
+                serde_json::from_value(attributes_json).unwrap_or_else(|_| HashMap::new());
+
+            UserData {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                email: row.get("email"),
+                password_hash: row.get("password_hash"),
+                name: row.get("name"),
+                picture: row.get("picture"),
+                role: row.get("role"),
+                active: row.get("active"),
+                email_verified: row.get("email_verified"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                attributes,
+            }
+        }))
+    }
+
+    async fn list_users(&self, tenant_id: &str) -> Result<Vec<UserData>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, tenant_id, email, password_hash, name, picture, role, active, email_verified, created_at, updated_at, attributes
+            FROM users
+            WHERE tenant_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to list users: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let attributes_json: serde_json::Value = row.get("attributes");
+                let attributes: HashMap<String, String> =
+                    serde_json::from_value(attributes_json).unwrap_or_else(|_| HashMap::new());
+
+                UserData {
+                    id: row.get("id"),
+                    tenant_id: row.get("tenant_id"),
+                    email: row.get("email"),
+                    password_hash: row.get("password_hash"),
+                    name: row.get("name"),
+                    picture: row.get("picture"),
+                    role: row.get("role"),
+                    active: row.get("active"),
+                    email_verified: row.get("email_verified"),
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                    attributes,
+                }
+            })
+            .collect())
+    }
+
+    async fn update_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError> {
+        let attributes_json = serde_json::to_value(&data.attributes).map_err(|e| {
+            StorageError::SerializationError(format!("Failed to serialize user attributes: {}", e))
+        })?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE users
+            SET email = $2, password_hash = $3, name = $4, picture = $5, role = $6, active = $7, email_verified = $8, updated_at = $9, attributes = $10
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(&data.email)
+        .bind(&data.password_hash)
+        .bind(data.name.as_deref())
+        .bind(data.picture.as_deref())
+        .bind(&data.role)
+        .bind(data.active)
+        .bind(data.email_verified)
+        .bind(data.updated_at)
+        .bind(attributes_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::ConnectionError(format!("Failed to update user: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<(), StorageError> {
+        let result = sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::ConnectionError(format!("Failed to delete user: {}", e)))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
 }

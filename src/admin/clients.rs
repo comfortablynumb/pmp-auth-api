@@ -1,38 +1,14 @@
 // OAuth2 Client management admin API
 
 use super::{error_response, not_found, validation_error, AdminError};
+use crate::storage::{OAuth2ClientData, OAuth2ClientType};
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 use uuid::Uuid;
-
-// In-memory client storage (TODO: Move to storage backend)
-use lazy_static::lazy_static;
-
-lazy_static! {
-    pub static ref CLIENTS: Arc<Mutex<HashMap<String, Client>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-}
-
-/// OAuth2 Client metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Client {
-    pub client_id: String,
-    pub client_secret: String,
-    pub tenant_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub redirect_uris: Vec<String>,
-    pub grant_types: Vec<String>,
-    pub scopes: Vec<String>,
-    pub active: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
 
 /// List all clients for a tenant
 /// GET /api/v1/admin/tenants/{tenant_id}/clients
@@ -48,25 +24,28 @@ pub async fn list_clients(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let clients = CLIENTS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock clients: {}", e),
-        )
-    })?;
+    let clients = state
+        .storage
+        .list_oauth2_clients(&tenant_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to list clients: {}", e),
+            )
+        })?;
 
     let tenant_clients: Vec<ClientResponse> = clients
-        .values()
-        .filter(|c| c.tenant_id == tenant_id)
+        .into_iter()
         .map(|c| ClientResponse {
-            client_id: c.client_id.clone(),
-            tenant_id: c.tenant_id.clone(),
-            name: c.name.clone(),
-            description: c.description.clone(),
-            redirect_uris: c.redirect_uris.clone(),
-            grant_types: c.grant_types.clone(),
-            scopes: c.scopes.clone(),
+            client_id: c.client_id,
+            tenant_id: c.tenant_id,
+            name: c.name,
+            description: c.description,
+            redirect_uris: c.redirect_uris,
+            grant_types: c.grant_types,
+            scopes: c.allowed_scopes,
             active: c.active,
             created_at: c.created_at,
         })
@@ -97,16 +76,17 @@ pub async fn get_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let clients = CLIENTS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock clients: {}", e),
-        )
-    })?;
-
-    let client = clients
-        .get(&client_id)
+    let client = state
+        .storage
+        .get_oauth2_client(&client_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get client: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("Client", &client_id))?;
 
     // Verify client belongs to tenant
@@ -120,13 +100,13 @@ pub async fn get_client(
     );
 
     Ok(Json(ClientResponse {
-        client_id: client.client_id.clone(),
-        tenant_id: client.tenant_id.clone(),
-        name: client.name.clone(),
-        description: client.description.clone(),
-        redirect_uris: client.redirect_uris.clone(),
-        grant_types: client.grant_types.clone(),
-        scopes: client.scopes.clone(),
+        client_id: client.client_id,
+        tenant_id: client.tenant_id,
+        name: client.name,
+        description: client.description,
+        redirect_uris: client.redirect_uris,
+        grant_types: client.grant_types,
+        scopes: client.allowed_scopes,
         active: client.active,
         created_at: client.created_at,
     }))
@@ -161,30 +141,40 @@ pub async fn create_client(
     // Generate client credentials
     let client_id = format!("client_{}", Uuid::new_v4());
     let client_secret = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
 
-    let client = Client {
+    let client = OAuth2ClientData {
         client_id: client_id.clone(),
-        client_secret: client_secret.clone(),
+        client_secret: Some(client_secret.clone()),
         tenant_id: tenant_id.clone(),
         name: request.name.clone(),
         description: request.description.clone(),
         redirect_uris: request.redirect_uris.clone(),
+        allowed_scopes: request.scopes.clone(),
         grant_types: request.grant_types.clone(),
-        scopes: request.scopes.clone(),
+        client_type: OAuth2ClientType::Confidential,
+        created_at: now,
+        updated_at: now,
         active: true,
-        created_at: chrono::Utc::now(),
+        public_key_pem: None,
+        jwks_uri: None,
+        token_endpoint_auth_method: None,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
     };
 
     // Store client
-    let mut clients = CLIENTS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock clients: {}", e),
-        )
-    })?;
-
-    clients.insert(client_id.clone(), client.clone());
+    state
+        .storage
+        .store_oauth2_client(&client_id, client.clone())
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to store client: {}", e),
+            )
+        })?;
 
     info!(
         "Admin API: Created client '{}' for tenant '{}'",
@@ -193,13 +183,13 @@ pub async fn create_client(
 
     let response = ClientCreatedResponse {
         client_id: client.client_id,
-        client_secret: client.client_secret,
+        client_secret,
         tenant_id: client.tenant_id,
         name: client.name,
         description: client.description,
         redirect_uris: client.redirect_uris,
         grant_types: client.grant_types,
-        scopes: client.scopes,
+        scopes: client.allowed_scopes,
         active: client.active,
         created_at: client.created_at,
     };
@@ -225,16 +215,17 @@ pub async fn update_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut clients = CLIENTS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock clients: {}", e),
-        )
-    })?;
-
-    let client = clients
-        .get_mut(&client_id)
+    let mut client = state
+        .storage
+        .get_oauth2_client(&client_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get client: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("Client", &client_id))?;
 
     // Verify client belongs to tenant
@@ -262,11 +253,25 @@ pub async fn update_client(
         client.grant_types = grant_types;
     }
     if let Some(scopes) = request.scopes {
-        client.scopes = scopes;
+        client.allowed_scopes = scopes;
     }
     if let Some(active) = request.active {
         client.active = active;
     }
+
+    client.updated_at = chrono::Utc::now();
+
+    state
+        .storage
+        .update_oauth2_client(&client_id, client.clone())
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to update client: {}", e),
+            )
+        })?;
 
     info!(
         "Admin API: Updated client '{}' for tenant '{}'",
@@ -274,13 +279,13 @@ pub async fn update_client(
     );
 
     Ok(Json(ClientResponse {
-        client_id: client.client_id.clone(),
-        tenant_id: client.tenant_id.clone(),
-        name: client.name.clone(),
-        description: client.description.clone(),
-        redirect_uris: client.redirect_uris.clone(),
-        grant_types: client.grant_types.clone(),
-        scopes: client.scopes.clone(),
+        client_id: client.client_id,
+        tenant_id: client.tenant_id,
+        name: client.name,
+        description: client.description,
+        redirect_uris: client.redirect_uris,
+        grant_types: client.grant_types,
+        scopes: client.allowed_scopes,
         active: client.active,
         created_at: client.created_at,
     }))
@@ -303,16 +308,17 @@ pub async fn delete_client(
         .get_tenant(&tenant_id)
         .ok_or_else(|| not_found("Tenant", &tenant_id))?;
 
-    let mut clients = CLIENTS.lock().map_err(|e| {
-        error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "lock_error",
-            &format!("Failed to lock clients: {}", e),
-        )
-    })?;
-
-    let client = clients
-        .get(&client_id)
+    let client = state
+        .storage
+        .get_oauth2_client(&client_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to get client: {}", e),
+            )
+        })?
         .ok_or_else(|| not_found("Client", &client_id))?;
 
     // Verify client belongs to tenant
@@ -320,7 +326,17 @@ pub async fn delete_client(
         return Err(not_found("Client", &client_id));
     }
 
-    clients.remove(&client_id);
+    state
+        .storage
+        .delete_oauth2_client(&client_id)
+        .await
+        .map_err(|e| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                &format!("Failed to delete client: {}", e),
+            )
+        })?;
 
     info!(
         "Admin API: Deleted client '{}' for tenant '{}'",

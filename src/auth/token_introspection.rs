@@ -6,6 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Token introspection request (RFC 7662)
@@ -204,8 +205,8 @@ async fn introspect_token(
                 }
             }
 
-            // Check if token is revoked (check API_KEYS storage for API keys)
-            if claims.api_key == Some(true) && is_api_key_revoked(&claims.sub) {
+            // Check if token is revoked (check API keys storage for API keys)
+            if claims.api_key == Some(true) && is_api_key_revoked(&state.storage, &claims.sub).await {
                 return Ok(IntrospectionResponse {
                     active: false,
                     scope: claims.scope.clone(),
@@ -267,7 +268,7 @@ async fn introspect_token(
             }
 
             // Check revocation
-            if is_api_key_revoked(&claims.sub) {
+            if is_api_key_revoked(&state.storage, &claims.sub).await {
                 return Ok(IntrospectionResponse {
                     active: false,
                     scope: claims.scope.clone(),
@@ -343,13 +344,9 @@ fn load_key_pem(key_config: &str) -> Result<String, String> {
 }
 
 /// Check if an API key is revoked
-fn is_api_key_revoked(key_id: &str) -> bool {
-    use crate::auth::api_keys::API_KEYS;
-
-    if let Ok(keys) = API_KEYS.lock() {
-        if let Some(key_metadata) = keys.get(key_id) {
-            return key_metadata.revoked;
-        }
+async fn is_api_key_revoked(storage: &Arc<dyn crate::storage::StorageBackend>, key_id: &str) -> bool {
+    if let Ok(Some(key_metadata)) = storage.get_api_key(key_id).await {
+        return key_metadata.revoked;
     }
 
     false
@@ -405,11 +402,11 @@ pub async fn token_revoke(
                 // Check if this is an API key
                 if claims.api_key == Some(true) {
                     // Revoke the API key
-                    use crate::auth::api_keys::API_KEYS;
-
-                    if let Ok(mut keys) = API_KEYS.lock() {
-                        if let Some(key_metadata) = keys.get_mut(&claims.sub) {
-                            key_metadata.revoked = true;
+                    if let Ok(Some(mut key_metadata)) = state.storage.get_api_key(&claims.sub).await {
+                        key_metadata.revoked = true;
+                        if let Err(e) = state.storage.update_api_key(&claims.sub, key_metadata).await {
+                            warn!("Failed to revoke API key '{}': {}", claims.sub, e);
+                        } else {
                             info!("API key '{}' revoked successfully", claims.sub);
                         }
                     }
