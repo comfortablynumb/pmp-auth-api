@@ -1,7 +1,7 @@
 // Token Exchange (RFC 8693)
 // This module implements the OAuth 2.0 Token Exchange Protocol
 
-use crate::auth::identity_backend::create_identity_backend;
+use crate::auth::identity_storage::create_identity_storage;
 use crate::auth::oauth2_server::generate_access_token;
 use crate::models::Claims;
 use crate::AppState;
@@ -97,7 +97,7 @@ pub async fn token_exchange(
         )
     })?;
 
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "invalid_request", "error_description": "OAuth2 not enabled" })),
@@ -204,8 +204,17 @@ pub async fn token_exchange(
             .unwrap_or_else(|| vec!["openid".to_string()])
     };
 
-    // Retrieve user from identity backend to get current role
-    let backend = create_identity_backend(&tenant.identity_backend);
+    // Retrieve user from identity storage to get current role
+    let storage = state.config.get_identity_storage(&tenant_id, storage_id).ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "server_error",
+                "error_description": format!("Identity storage '{}' not found", storage_id)
+            })),
+        )
+    })?;
+    let backend = create_identity_storage(storage);
     let user = backend
         .get_user_by_id(&subject_claims.sub)
         .map_err(|e| {
@@ -365,6 +374,101 @@ mod tests {
     }
 
     #[test]
+    fn test_token_exchange_request_full_deserialization() {
+        let form = "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=subject123&subject_token_type=urn:ietf:params:oauth:token-type:access_token&actor_token=actor456&actor_token_type=urn:ietf:params:oauth:token-type:jwt&requested_token_type=urn:ietf:params:oauth:token-type:access_token&scope=read%20write&resource=https://api.example.com&audience=https://resource.example.com&client_id=test-client&client_secret=secret123";
+
+        let request: TokenExchangeRequest = serde_urlencoded::from_str(form).unwrap();
+        assert_eq!(request.grant_type, "urn:ietf:params:oauth:grant-type:token-exchange");
+        assert_eq!(request.subject_token, Some("subject123".to_string()));
+        assert_eq!(request.subject_token_type, Some("urn:ietf:params:oauth:token-type:access_token".to_string()));
+        assert_eq!(request.actor_token, Some("actor456".to_string()));
+        assert_eq!(request.actor_token_type, Some("urn:ietf:params:oauth:token-type:jwt".to_string()));
+        assert_eq!(request.requested_token_type, Some("urn:ietf:params:oauth:token-type:access_token".to_string()));
+        assert_eq!(request.scope, Some("read write".to_string()));
+        assert_eq!(request.resource, Some("https://api.example.com".to_string()));
+        assert_eq!(request.audience, Some("https://resource.example.com".to_string()));
+        assert_eq!(request.client_id, Some("test-client".to_string()));
+        assert_eq!(request.client_secret, Some("secret123".to_string()));
+    }
+
+    #[test]
+    fn test_token_exchange_request_minimal() {
+        let form = "grant_type=urn:ietf:params:oauth:grant-type:token-exchange";
+
+        let request: TokenExchangeRequest = serde_urlencoded::from_str(form).unwrap();
+        assert_eq!(request.grant_type, "urn:ietf:params:oauth:grant-type:token-exchange");
+        assert!(request.subject_token.is_none());
+        assert!(request.subject_token_type.is_none());
+        assert!(request.actor_token.is_none());
+        assert!(request.actor_token_type.is_none());
+        assert!(request.requested_token_type.is_none());
+        assert!(request.scope.is_none());
+        assert!(request.resource.is_none());
+        assert!(request.audience.is_none());
+    }
+
+    #[test]
+    fn test_token_exchange_request_with_subject_only() {
+        let form = "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=mytoken&subject_token_type=urn:ietf:params:oauth:token-type:access_token";
+
+        let request: TokenExchangeRequest = serde_urlencoded::from_str(form).unwrap();
+        assert_eq!(request.subject_token, Some("mytoken".to_string()));
+        assert_eq!(request.subject_token_type, Some("urn:ietf:params:oauth:token-type:access_token".to_string()));
+        assert!(request.actor_token.is_none());
+        assert!(request.actor_token_type.is_none());
+    }
+
+    #[test]
+    fn test_token_exchange_response_serialization() {
+        let response = TokenExchangeResponse {
+            access_token: "new_access_token_abc123".to_string(),
+            issued_token_type: token_types::ACCESS_TOKEN.to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: 3600,
+            scope: Some("read write".to_string()),
+            refresh_token: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"access_token\":\"new_access_token_abc123\""));
+        assert!(json.contains("\"issued_token_type\":\"urn:ietf:params:oauth:token-type:access_token\""));
+        assert!(json.contains("\"token_type\":\"Bearer\""));
+        assert!(json.contains("\"expires_in\":3600"));
+        assert!(json.contains("\"scope\":\"read write\""));
+    }
+
+    #[test]
+    fn test_token_exchange_response_without_optional_fields() {
+        let response = TokenExchangeResponse {
+            access_token: "token789".to_string(),
+            issued_token_type: token_types::JWT.to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: 7200,
+            scope: None,
+            refresh_token: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(!json.contains("\"scope\""));
+        assert!(!json.contains("\"refresh_token\""));
+    }
+
+    #[test]
+    fn test_token_exchange_response_with_refresh_token() {
+        let response = TokenExchangeResponse {
+            access_token: "access123".to_string(),
+            issued_token_type: token_types::ACCESS_TOKEN.to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: 1800,
+            scope: Some("openid profile".to_string()),
+            refresh_token: Some("refresh456".to_string()),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"refresh_token\":\"refresh456\""));
+    }
+
+    #[test]
     fn test_token_types() {
         assert_eq!(
             token_types::ACCESS_TOKEN,
@@ -374,5 +478,61 @@ mod tests {
             token_types::JWT,
             "urn:ietf:params:oauth:token-type:jwt"
         );
+        assert_eq!(
+            token_types::REFRESH_TOKEN,
+            "urn:ietf:params:oauth:token-type:refresh_token"
+        );
+        assert_eq!(
+            token_types::ID_TOKEN,
+            "urn:ietf:params:oauth:token-type:id_token"
+        );
+        assert_eq!(
+            token_types::SAML1,
+            "urn:ietf:params:oauth:token-type:saml1"
+        );
+        assert_eq!(
+            token_types::SAML2,
+            "urn:ietf:params:oauth:token-type:saml2"
+        );
+    }
+
+    #[test]
+    fn test_load_key_pem_inline() {
+        let inline_pem = "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----";
+        let result = load_key_pem(inline_pem);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), inline_pem);
+    }
+
+    #[test]
+    fn test_load_key_pem_file_not_found() {
+        let nonexistent_file = "/nonexistent/path/to/key.pem";
+        let result = load_key_pem(nonexistent_file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read key file"));
+    }
+
+    #[test]
+    fn test_load_key_pem_public_key() {
+        let public_key_pem = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----";
+        let result = load_key_pem(public_key_pem);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("BEGIN PUBLIC KEY"));
+    }
+
+    #[test]
+    fn test_token_exchange_request_with_audience() {
+        let form = "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=token&subject_token_type=urn:ietf:params:oauth:token-type:access_token&audience=https://target-api.example.com";
+
+        let request: TokenExchangeRequest = serde_urlencoded::from_str(form).unwrap();
+        assert_eq!(request.audience, Some("https://target-api.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_token_exchange_request_with_resource() {
+        let form = "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=token&subject_token_type=urn:ietf:params:oauth:token-type:access_token&resource=https://resource-server.example.com/api";
+
+        let request: TokenExchangeRequest = serde_urlencoded::from_str(form).unwrap();
+        assert_eq!(request.resource, Some("https://resource-server.example.com/api".to_string()));
     }
 }

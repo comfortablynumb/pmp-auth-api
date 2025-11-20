@@ -467,20 +467,152 @@ mod tests {
     }
 
     #[test]
-    fn test_api_key_metadata() {
-        let metadata = ApiKeyMetadata {
+    fn test_api_key_claims_deserialization() {
+        let json = r#"{
+            "sub": "key-456",
+            "iss": "pmp-auth-api/tenant2",
+            "aud": ["tenant2"],
+            "exp": 1234567890,
+            "iat": 1234567800,
+            "scope": "read write",
+            "api_key": true
+        }"#;
+
+        let claims: ApiKeyClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.sub, "key-456");
+        assert_eq!(claims.iss, "pmp-auth-api/tenant2");
+        assert_eq!(claims.aud, vec!["tenant2".to_string()]);
+        assert_eq!(claims.exp, Some(1234567890));
+        assert_eq!(claims.iat, 1234567800);
+        assert_eq!(claims.scope, "read write");
+        assert!(claims.api_key);
+    }
+
+    #[test]
+    fn test_api_key_claims_without_expiration() {
+        let claims = ApiKeyClaims {
+            sub: "key-never-expires".to_string(),
+            iss: "pmp-auth-api/test".to_string(),
+            aud: vec!["test".to_string()],
+            exp: None,
+            iat: 1234567800,
+            scope: "admin".to_string(),
+            api_key: true,
+        };
+
+        assert!(claims.exp.is_none());
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"exp\":null"));
+    }
+
+    #[test]
+    fn test_create_api_key_request_deserialization() {
+        let json = r#"{
+            "name": "Test Key",
+            "scopes": ["read", "write"],
+            "expires_in_days": 30
+        }"#;
+
+        let request: CreateApiKeyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.name, "Test Key");
+        assert_eq!(request.scopes, vec!["read", "write"]);
+        assert_eq!(request.expires_in_days, Some(30));
+    }
+
+    #[test]
+    fn test_create_api_key_request_without_expiration() {
+        let json = r#"{
+            "name": "Permanent Key",
+            "scopes": ["admin"]
+        }"#;
+
+        let request: CreateApiKeyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.name, "Permanent Key");
+        assert_eq!(request.scopes, vec!["admin"]);
+        assert_eq!(request.expires_in_days, None);
+    }
+
+    #[test]
+    fn test_create_api_key_response_serialization() {
+        let response = CreateApiKeyResponse {
             id: "key-123".to_string(),
-            tenant_id: "test-tenant".to_string(),
-            name: "Test API Key".to_string(),
+            name: "Test Key".to_string(),
+            api_key: "eyJhbGciOiJSUzI1NiJ9...".to_string(),
+            scopes: vec!["read".to_string(), "write".to_string()],
+            created_at: 1234567800,
+            expires_at: Some(1234654200),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"id\":\"key-123\""));
+        assert!(json.contains("\"name\":\"Test Key\""));
+        assert!(json.contains("eyJhbGciOiJSUzI1NiJ9"));
+    }
+
+    #[test]
+    fn test_api_key_info_serialization() {
+        let info = ApiKeyInfo {
+            id: "key-789".to_string(),
+            name: "Production Key".to_string(),
             scopes: vec!["api:read".to_string()],
             created_at: 1234567800,
             expires_at: None,
-            last_used: None,
+            last_used: Some(1234567900),
             revoked: false,
         };
 
-        assert_eq!(metadata.id, "key-123");
-        assert!(!metadata.revoked);
-        assert!(metadata.expires_at.is_none());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"id\":\"key-789\""));
+        assert!(json.contains("\"revoked\":false"));
+        assert!(json.contains("\"last_used\":1234567900"));
+    }
+
+    #[test]
+    fn test_api_key_info_revoked() {
+        let info = ApiKeyInfo {
+            id: "key-revoked".to_string(),
+            name: "Revoked Key".to_string(),
+            scopes: vec![],
+            created_at: 1234567800,
+            expires_at: Some(1234654200),
+            last_used: None,
+            revoked: true,
+        };
+
+        assert!(info.revoked);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"revoked\":true"));
+    }
+
+    #[test]
+    fn test_load_key_pem_inline() {
+        let inline_pem = "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----";
+        let result = load_key_pem(inline_pem);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), inline_pem);
+    }
+
+    #[test]
+    fn test_load_key_pem_file_not_found() {
+        let nonexistent_file = "/nonexistent/path/to/key.pem";
+        let result = load_key_pem(nonexistent_file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read key file"));
+    }
+
+    #[test]
+    fn test_load_key_pem_public_key() {
+        let public_key_pem = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----";
+        let result = load_key_pem(public_key_pem);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("BEGIN PUBLIC KEY"));
+    }
+
+    #[test]
+    fn test_load_key_pem_private_key() {
+        let private_key_pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQ\n-----END PRIVATE KEY-----";
+        let result = load_key_pem(private_key_pem);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("BEGIN PRIVATE KEY"));
     }
 }

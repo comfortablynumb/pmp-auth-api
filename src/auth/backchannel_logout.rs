@@ -229,6 +229,10 @@ mod tests {
                 private_key: "/path/to/key.pem".to_string(),
                 public_key: "/path/to/pub.pem".to_string(),
             },
+            request_parameter_supported: false,
+            request_uri_parameter_supported: false,
+            require_request_uri_registration: false,
+            request_object_signing_alg_values_supported: vec![],
         };
 
         // Should fail when both user_id and session_id are None

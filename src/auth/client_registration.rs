@@ -61,6 +61,9 @@ pub struct ClientRegistrationRequest {
     /// Whether front-channel logout requires session_id
     #[serde(default)]
     pub frontchannel_logout_session_required: bool,
+    /// Pre-registered request object URIs (RFC 9101)
+    #[serde(default)]
+    pub request_uris: Vec<String>,
 }
 
 /// Client Registration Response (RFC 7591 Section 3.2.1)
@@ -109,6 +112,9 @@ pub struct ClientRegistrationResponse {
     /// Whether front-channel logout requires session_id
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontchannel_logout_session_required: Option<bool>,
+    /// Pre-registered request object URIs (RFC 9101)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub request_uris: Vec<String>,
 }
 
 /// Register a new OAuth2 client
@@ -223,6 +229,12 @@ pub async fn register_client(
         backchannel_logout_session_required: request.backchannel_logout_session_required,
         frontchannel_logout_uri: request.frontchannel_logout_uri.clone(),
         frontchannel_logout_session_required: request.frontchannel_logout_session_required,
+        request_uris: if request.request_uris.is_empty() {
+            None
+        } else {
+            Some(request.request_uris.clone())
+        },
+        jwks: request.jwks.clone(),
     };
 
     // Store client in database
@@ -268,6 +280,7 @@ pub async fn register_client(
         } else {
             None
         },
+        request_uris: request.request_uris,
     }))
 }
 
@@ -353,6 +366,7 @@ pub async fn get_client(
         } else {
             None
         },
+        request_uris: client.request_uris.unwrap_or_default(),
     }))
 }
 
@@ -495,6 +509,7 @@ pub async fn update_client(
         } else {
             None
         },
+        request_uris: client.request_uris.unwrap_or_default(),
     }))
 }
 

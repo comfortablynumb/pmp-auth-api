@@ -10,12 +10,17 @@ pub struct Tenant {
     pub name: String,
     /// Description of the tenant
     pub description: Option<String>,
-    /// Identity provider configuration
-    pub identity_provider: IdentityProviderConfig,
-    /// Identity backend for user storage/validation
-    pub identity_backend: IdentityBackend,
+    /// Identity providers map (provider_id -> IdentityProvider)
+    #[serde(default)]
+    pub identity_providers: HashMap<String, IdentityProvider>,
+    /// Identity storage map for user storage/validation (per-tenant storage)
+    #[serde(default)]
+    pub identity_storage: HashMap<String, IdentityStorage>,
     /// API key configuration (optional)
     pub api_keys: Option<ApiKeyConfig>,
+    /// Federation providers for external OAuth2/OIDC authentication (e.g., Google, GitHub)
+    #[serde(default)]
+    pub federation_providers: HashMap<String, crate::auth::federation::types::FederationProviderConfig>,
     /// Whether this tenant is active
     #[serde(default = "default_active")]
     pub active: bool,
@@ -28,7 +33,186 @@ fn default_active() -> bool {
     true
 }
 
+impl Tenant {
+    /// Get a storage by ID from this tenant's storage map
+    pub fn get_storage(&self, storage_id: &str) -> Option<&IdentityStorage> {
+        self.identity_storage.get(storage_id)
+    }
+
+    /// Get the default storage (first in map or one named "default")
+    /// This is for backward compatibility during transition
+    pub fn get_default_storage(&self) -> Option<&IdentityStorage> {
+        // First try to find one named "default"
+        if let Some(storage) = self.identity_storage.get("default") {
+            return Some(storage);
+        }
+
+        // Otherwise return the first one
+        self.identity_storage.values().next()
+    }
+
+    /// Get a provider by ID from this tenant's provider map
+    pub fn get_provider(&self, provider_id: &str) -> Option<&IdentityProvider> {
+        self.identity_providers.get(provider_id)
+    }
+
+    /// Get the default provider (first in map or one named "default")
+    /// This is for backward compatibility during transition
+    pub fn get_default_provider(&self) -> Option<&IdentityProvider> {
+        // First try to find one named "default"
+        if let Some(provider) = self.identity_providers.get("default") {
+            return Some(provider);
+        }
+
+        // Otherwise return the first one
+        self.identity_providers.values().next()
+    }
+
+    /// Get a specific OAuth2 provider by ID
+    /// Returns (config, storage_id)
+    pub fn get_oauth2_provider_by_id(&self, provider_id: &str) -> Option<(&OAuth2ServerConfig, &str)> {
+        if let Some(IdentityProvider::OAuth2 {
+            config,
+            identity_storage_id,
+        }) = self.identity_providers.get(provider_id)
+        {
+            return Some((config, identity_storage_id));
+        }
+        None
+    }
+
+    /// Get the first OAuth2 provider from this tenant (for backward compatibility)
+    /// Returns (config, storage_id)
+    pub fn get_oauth2_provider(&self) -> Option<(&OAuth2ServerConfig, &str)> {
+        // First try to find one named "default"
+        if let Some(result) = self.get_oauth2_provider_by_id("default") {
+            return Some(result);
+        }
+
+        // Otherwise return the first OAuth2 provider
+        for (_, provider) in &self.identity_providers {
+            if let IdentityProvider::OAuth2 {
+                config,
+                identity_storage_id,
+            } = provider
+            {
+                return Some((config, identity_storage_id));
+            }
+        }
+        None
+    }
+
+    /// Get a specific OIDC provider by ID
+    /// Returns (config, storage_id)
+    pub fn get_oidc_provider_by_id(&self, provider_id: &str) -> Option<(&OidcProviderConfig, &str)> {
+        if let Some(IdentityProvider::Oidc {
+            config,
+            identity_storage_id,
+        }) = self.identity_providers.get(provider_id)
+        {
+            return Some((config, identity_storage_id));
+        }
+        None
+    }
+
+    /// Get the first OIDC provider from this tenant (for backward compatibility)
+    /// Returns (config, storage_id)
+    pub fn get_oidc_provider(&self) -> Option<(&OidcProviderConfig, &str)> {
+        // First try to find one named "default"
+        if let Some(result) = self.get_oidc_provider_by_id("default") {
+            return Some(result);
+        }
+
+        // Otherwise return the first OIDC provider
+        for (_, provider) in &self.identity_providers {
+            if let IdentityProvider::Oidc {
+                config,
+                identity_storage_id,
+            } = provider
+            {
+                return Some((config, identity_storage_id));
+            }
+        }
+        None
+    }
+
+    /// Get a specific SAML provider by ID
+    /// Returns (config, storage_id)
+    pub fn get_saml_provider_by_id(&self, provider_id: &str) -> Option<(&SamlIdpConfig, &str)> {
+        if let Some(IdentityProvider::Saml {
+            config,
+            identity_storage_id,
+        }) = self.identity_providers.get(provider_id)
+        {
+            return Some((config, identity_storage_id));
+        }
+        None
+    }
+
+    /// Get the first SAML provider from this tenant (for backward compatibility)
+    /// Returns (config, storage_id)
+    pub fn get_saml_provider(&self) -> Option<(&SamlIdpConfig, &str)> {
+        // First try to find one named "default"
+        if let Some(result) = self.get_saml_provider_by_id("default") {
+            return Some(result);
+        }
+
+        // Otherwise return the first SAML provider
+        for (_, provider) in &self.identity_providers {
+            if let IdentityProvider::Saml {
+                config,
+                identity_storage_id,
+            } = provider
+            {
+                return Some((config, identity_storage_id));
+            }
+        }
+        None
+    }
+
+    /// Get a federation provider by ID
+    pub fn get_federation_provider(&self, provider_id: &str) -> Option<&crate::auth::federation::types::FederationProviderConfig> {
+        self.federation_providers.get(provider_id)
+    }
+
+    /// Get all federation providers
+    pub fn get_all_federation_providers(&self) -> Vec<&crate::auth::federation::types::FederationProviderConfig> {
+        self.federation_providers.values().collect()
+    }
+}
+
 /// Identity provider configuration (what this service provides)
+/// This enum represents a single identity provider with its configuration and linked storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum IdentityProvider {
+    /// OAuth2 authorization server
+    OAuth2 {
+        /// OAuth2 configuration
+        #[serde(flatten)]
+        config: OAuth2ServerConfig,
+        /// ID of the identity storage to use for user lookup
+        identity_storage_id: String,
+    },
+    /// OpenID Connect provider
+    Oidc {
+        /// OIDC configuration
+        #[serde(flatten)]
+        config: OidcProviderConfig,
+        /// ID of the identity storage to use for user lookup
+        identity_storage_id: String,
+    },
+    /// SAML identity provider
+    Saml {
+        /// SAML configuration
+        #[serde(flatten)]
+        config: SamlIdpConfig,
+        /// ID of the identity storage to use for user lookup
+        identity_storage_id: String,
+    },
+}
+
+/// Legacy identity provider configuration (deprecated, kept for backward compatibility during migration)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityProviderConfig {
     /// OAuth2 authorization server configuration
@@ -67,6 +251,18 @@ pub struct OAuth2ServerConfig {
     /// Whether password grant is enabled (default: false for security)
     #[serde(default)]
     pub password_grant_enabled: bool,
+    /// Whether request parameter is supported (RFC 9101)
+    #[serde(default)]
+    pub request_parameter_supported: bool,
+    /// Whether request_uri parameter is supported (RFC 9101)
+    #[serde(default)]
+    pub request_uri_parameter_supported: bool,
+    /// Whether request_uri registration is required (RFC 9101)
+    #[serde(default)]
+    pub require_request_uri_registration: bool,
+    /// Supported request object signing algorithms (RFC 9101)
+    #[serde(default)]
+    pub request_object_signing_alg_values_supported: Vec<String>,
 }
 
 fn default_grant_types() -> Vec<String> {
@@ -115,6 +311,31 @@ fn default_signing_algorithm() -> String {
     "RS256".to_string()
 }
 
+/// JWK encryption configuration for ID tokens (JWE)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JwkEncryptionConfig {
+    /// Key encryption algorithm (RSA-OAEP, RSA-OAEP-256, etc.)
+    #[serde(default = "default_encryption_algorithm")]
+    pub alg: String,
+    /// Content encryption algorithm (A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512)
+    #[serde(default = "default_encryption_enc")]
+    pub enc: String,
+    /// Key ID
+    pub kid: String,
+    /// Public key for encryption (path or inline PEM)
+    pub public_key: String,
+    /// Private key for decryption (path or inline PEM) - optional, only needed for decryption
+    pub private_key: Option<String>,
+}
+
+fn default_encryption_algorithm() -> String {
+    "RSA-OAEP".to_string()
+}
+
+fn default_encryption_enc() -> String {
+    "A256GCM".to_string()
+}
+
 /// OpenID Connect provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcProviderConfig {
@@ -132,6 +353,14 @@ pub struct OidcProviderConfig {
     /// ID token expiration in seconds (default: 3600 = 1 hour)
     #[serde(default = "default_id_token_expiration")]
     pub id_token_expiration_secs: i64,
+    /// Optional encryption key for ID tokens (JWE)
+    pub encryption_key: Option<JwkEncryptionConfig>,
+    /// Supported ID token encryption algorithms
+    #[serde(default)]
+    pub id_token_encryption_alg_values_supported: Vec<String>,
+    /// Supported ID token encryption encoding values
+    #[serde(default)]
+    pub id_token_encryption_enc_values_supported: Vec<String>,
 }
 
 fn default_userinfo_endpoint() -> String {
@@ -194,45 +423,19 @@ fn default_name_id_format() -> String {
     "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress".to_string()
 }
 
-/// Identity backend - where user identities come from
+/// Identity storage - where user identities come from
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum IdentityBackend {
-    /// External OAuth2 provider (Google, GitHub, etc.)
-    OAuth2(OAuth2BackendConfig),
+pub enum IdentityStorage {
     /// LDAP/Active Directory
-    Ldap(LdapBackendConfig),
+    Ldap(LdapStorageConfig),
     /// Database (PostgreSQL, MySQL, etc.)
-    Database(DatabaseBackendConfig),
-    /// Federated identity from upstream IdP
-    Federated(FederatedBackendConfig),
-    /// Mock backend for testing
-    Mock(MockBackendConfig),
+    Database(DatabaseStorageConfig),
 }
 
-/// OAuth2 backend configuration
+/// LDAP storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuth2BackendConfig {
-    /// Provider name (google, github, microsoft, etc.)
-    pub provider: String,
-    /// OAuth2 client ID
-    pub client_id: String,
-    /// OAuth2 client secret
-    pub client_secret: String,
-    /// Authorization endpoint URL
-    pub auth_url: String,
-    /// Token endpoint URL
-    pub token_url: String,
-    /// UserInfo endpoint URL
-    pub userinfo_url: String,
-    /// OAuth2 scopes to request
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
-/// LDAP backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LdapBackendConfig {
+pub struct LdapStorageConfig {
     /// LDAP server URL (ldap://... or ldaps://...)
     pub url: String,
     /// Bind DN for authentication
@@ -269,9 +472,9 @@ fn default_ldap_attributes() -> Option<Vec<String>> {
     ])
 }
 
-/// Database backend configuration
+/// Database storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseBackendConfig {
+pub struct DatabaseStorageConfig {
     /// Database connection URL
     pub connection_url: String,
     /// Database type (postgres, mysql, etc.)
@@ -300,38 +503,6 @@ fn default_id_column() -> String {
 
 fn default_email_column() -> String {
     "email".to_string()
-}
-
-/// Federated backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FederatedBackendConfig {
-    /// Upstream IdP type (saml, oidc, etc.)
-    pub idp_type: String,
-    /// SAML metadata URL or configuration
-    pub metadata_url: Option<String>,
-    /// OIDC discovery URL
-    pub discovery_url: Option<String>,
-    /// Client ID (for OIDC)
-    pub client_id: Option<String>,
-    /// Client secret (for OIDC)
-    pub client_secret: Option<String>,
-}
-
-/// Mock backend for testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MockBackendConfig {
-    /// Predefined users for testing
-    #[serde(default)]
-    pub users: Vec<MockUser>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MockUser {
-    pub id: String,
-    pub email: String,
-    pub name: Option<String>,
-    #[serde(default)]
-    pub attributes: HashMap<String, String>,
 }
 
 /// API Key configuration
@@ -373,6 +544,9 @@ pub enum StorageConfig {
 pub struct AppConfig {
     /// Map of tenant ID to tenant configuration
     pub tenants: HashMap<String, Tenant>,
+    /// Global identity storage map (can be inherited by tenants)
+    #[serde(default)]
+    pub identity_storage: HashMap<String, IdentityStorage>,
     /// Storage backend configuration
     #[serde(default)]
     pub storage: StorageConfig,
@@ -384,6 +558,23 @@ impl AppConfig {
         self.tenants.get(tenant_id)
     }
 
+    /// Get identity storage by ID, checking both global and tenant-specific storage
+    pub fn get_identity_storage(
+        &self,
+        tenant_id: &str,
+        storage_id: &str,
+    ) -> Option<&IdentityStorage> {
+        // First check tenant-specific storage
+        if let Some(tenant) = self.get_tenant(tenant_id) {
+            if let Some(storage) = tenant.identity_storage.get(storage_id) {
+                return Some(storage);
+            }
+        }
+
+        // Fall back to global storage
+        self.identity_storage.get(storage_id)
+    }
+
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.tenants.is_empty() {
@@ -392,88 +583,131 @@ impl AppConfig {
 
         for (tenant_id, tenant) in &self.tenants {
             // Check that at least one identity provider is configured
-            if tenant.identity_provider.oauth2.is_none()
-                && tenant.identity_provider.oidc.is_none()
-                && tenant.identity_provider.saml.is_none()
-            {
+            if tenant.identity_providers.is_empty() {
                 return Err(format!(
-                    "Tenant '{}' must have at least one identity provider configured (oauth2, oidc, or saml)",
+                    "Tenant '{}' must have at least one identity provider configured",
                     tenant_id
                 ));
             }
 
-            // Validate OAuth2 server config if present
-            if let Some(oauth2) = &tenant.identity_provider.oauth2 {
-                if oauth2.issuer.is_empty() {
-                    return Err(format!(
-                        "OAuth2 issuer for tenant '{}' cannot be empty",
-                        tenant_id
-                    ));
-                }
-            }
+            // Validate each provider
+            for (provider_id, provider) in &tenant.identity_providers {
+                match provider {
+                    IdentityProvider::OAuth2 { config, identity_storage_id } => {
+                        if config.issuer.is_empty() {
+                            return Err(format!(
+                                "OAuth2 provider '{}' for tenant '{}' must have an issuer",
+                                provider_id, tenant_id
+                            ));
+                        }
 
-            // Validate OIDC config if present
-            if let Some(oidc) = &tenant.identity_provider.oidc {
-                if oidc.issuer.is_empty() {
-                    return Err(format!(
-                        "OIDC issuer for tenant '{}' cannot be empty",
-                        tenant_id
-                    ));
-                }
-            }
+                        // Validate that the storage_id exists
+                        if !tenant.identity_storage.contains_key(identity_storage_id)
+                            && !self.identity_storage.contains_key(identity_storage_id)
+                        {
+                            return Err(format!(
+                                "OAuth2 provider '{}' for tenant '{}' references non-existent storage '{}'",
+                                provider_id, tenant_id, identity_storage_id
+                            ));
+                        }
 
-            // Validate SAML config if present
-            if let Some(saml) = &tenant.identity_provider.saml {
-                if saml.entity_id.is_empty() {
-                    return Err(format!(
-                        "SAML entity_id for tenant '{}' cannot be empty",
-                        tenant_id
-                    ));
-                }
-                if saml.certificate.is_empty() || saml.private_key.is_empty() {
-                    return Err(format!(
-                        "SAML certificate and private_key for tenant '{}' cannot be empty",
-                        tenant_id
-                    ));
-                }
-            }
+                        // Validate password grant requires database or LDAP storage
+                        if config.password_grant_enabled {
+                            let storage = self.get_identity_storage(tenant_id, identity_storage_id);
+                            if storage.is_none() {
+                                return Err(format!(
+                                    "OAuth2 provider '{}' for tenant '{}' has password grant enabled but storage '{}' not found",
+                                    provider_id, tenant_id, identity_storage_id
+                                ));
+                            }
+                        }
+                    }
+                    IdentityProvider::Oidc { config, identity_storage_id } => {
+                        if config.issuer.is_empty() {
+                            return Err(format!(
+                                "OIDC provider '{}' for tenant '{}' must have an issuer",
+                                provider_id, tenant_id
+                            ));
+                        }
 
-            // Validate identity backend
-            match &tenant.identity_backend {
-                IdentityBackend::OAuth2(config) => {
-                    if config.client_id.is_empty() || config.client_secret.is_empty() {
-                        return Err(format!(
-                            "OAuth2 backend for tenant '{}' must have client_id and client_secret",
-                            tenant_id
-                        ));
+                        // Validate that the storage_id exists
+                        if !tenant.identity_storage.contains_key(identity_storage_id)
+                            && !self.identity_storage.contains_key(identity_storage_id)
+                        {
+                            return Err(format!(
+                                "OIDC provider '{}' for tenant '{}' references non-existent storage '{}'",
+                                provider_id, tenant_id, identity_storage_id
+                            ));
+                        }
+                    }
+                    IdentityProvider::Saml { config, identity_storage_id } => {
+                        if config.entity_id.is_empty() {
+                            return Err(format!(
+                                "SAML provider '{}' for tenant '{}' must have an entity_id",
+                                provider_id, tenant_id
+                            ));
+                        }
+                        if config.certificate.is_empty() || config.private_key.is_empty() {
+                            return Err(format!(
+                                "SAML provider '{}' for tenant '{}' must have certificate and private_key",
+                                provider_id, tenant_id
+                            ));
+                        }
+
+                        // Validate that the storage_id exists
+                        if !tenant.identity_storage.contains_key(identity_storage_id)
+                            && !self.identity_storage.contains_key(identity_storage_id)
+                        {
+                            return Err(format!(
+                                "SAML provider '{}' for tenant '{}' references non-existent storage '{}'",
+                                provider_id, tenant_id, identity_storage_id
+                            ));
+                        }
                     }
                 }
-                IdentityBackend::Ldap(config) => {
+            }
+
+            // Validate identity storage - check both tenant-specific and will validate providers reference valid IDs in later phase
+            for (storage_id, storage) in &tenant.identity_storage {
+                match storage {
+                    IdentityStorage::Ldap(config) => {
+                        if config.url.is_empty() || config.base_dn.is_empty() {
+                            return Err(format!(
+                                "LDAP storage '{}' for tenant '{}' must have url and base_dn",
+                                storage_id, tenant_id
+                            ));
+                        }
+                    }
+                    IdentityStorage::Database(config) => {
+                        if config.connection_url.is_empty() {
+                            return Err(format!(
+                                "Database storage '{}' for tenant '{}' must have connection_url",
+                                storage_id, tenant_id
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate global identity storage
+        for (storage_id, storage) in &self.identity_storage {
+            match storage {
+                IdentityStorage::Ldap(config) => {
                     if config.url.is_empty() || config.base_dn.is_empty() {
                         return Err(format!(
-                            "LDAP backend for tenant '{}' must have url and base_dn",
-                            tenant_id
+                            "Global LDAP storage '{}' must have url and base_dn",
+                            storage_id
                         ));
                     }
                 }
-                IdentityBackend::Database(config) => {
+                IdentityStorage::Database(config) => {
                     if config.connection_url.is_empty() {
                         return Err(format!(
-                            "Database backend for tenant '{}' must have connection_url",
-                            tenant_id
+                            "Global database storage '{}' must have connection_url",
+                            storage_id
                         ));
                     }
-                }
-                IdentityBackend::Federated(config) => {
-                    if config.idp_type.is_empty() {
-                        return Err(format!(
-                            "Federated backend for tenant '{}' must have idp_type",
-                            tenant_id
-                        ));
-                    }
-                }
-                IdentityBackend::Mock(_) => {
-                    // Mock backend is always valid
                 }
             }
         }

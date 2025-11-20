@@ -87,7 +87,6 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
         middleware,
-        response::Response,
         Router,
         routing::get,
     };

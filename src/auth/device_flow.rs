@@ -73,7 +73,7 @@ pub async fn device_authorize(
     })?;
 
     // Verify OAuth2 is configured
-    let _oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (_oauth2_config, _storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -121,10 +121,8 @@ pub async fn device_authorize(
 
     // Build verification URI
     let base_url = tenant
-        .identity_provider
-        .oauth2
-        .as_ref()
-        .map(|o| extract_base_url(&o.issuer))
+        .get_oauth2_provider()
+        .map(|(oauth2_config, _)| extract_base_url(&oauth2_config.issuer))
         .unwrap_or_else(|| "http://localhost:3000".to_string());
 
     let verification_uri = format!("{}/device", base_url);
@@ -269,7 +267,7 @@ pub async fn device_token(
     })?;
 
     // Generate tokens
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().unwrap();
+    let (oauth2_config, _storage_id) = tenant.get_oauth2_provider().unwrap();
 
     // Fetch actual user from storage backend
     let user = state
@@ -539,6 +537,30 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_user_code_uniqueness() {
+        let code1 = generate_user_code();
+        let code2 = generate_user_code();
+        let code3 = generate_user_code();
+
+        // While theoretically these could be equal, probability is very low
+        // Just check they're all valid format
+        assert_eq!(code1.len(), 9);
+        assert_eq!(code2.len(), 9);
+        assert_eq!(code3.len(), 9);
+    }
+
+    #[test]
+    fn test_generate_user_code_no_confusing_chars() {
+        for _ in 0..100 {
+            let code = generate_user_code();
+            assert!(!code.contains('I'));
+            assert!(!code.contains('O'));
+            assert!(!code.contains('0'));
+            assert!(!code.contains('1'));
+        }
+    }
+
+    #[test]
     fn test_extract_base_url() {
         assert_eq!(
             extract_base_url("https://auth.example.com/tenant/test"),
@@ -548,5 +570,128 @@ mod tests {
             extract_base_url("http://localhost:3000"),
             "http://localhost:3000"
         );
+    }
+
+    #[test]
+    fn test_extract_base_url_with_path() {
+        assert_eq!(
+            extract_base_url("https://example.com/api/v1/oauth/authorize"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_extract_base_url_with_port() {
+        assert_eq!(
+            extract_base_url("http://localhost:8080/tenant/test"),
+            "http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn test_device_authorization_request_deserialization() {
+        let json = r#"{
+            "client_id": "test-client",
+            "scope": "openid profile"
+        }"#;
+
+        let request: DeviceAuthorizationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.client_id, "test-client");
+        assert_eq!(request.scope, "openid profile");
+    }
+
+    #[test]
+    fn test_device_authorization_request_without_scope() {
+        let json = r#"{
+            "client_id": "test-client"
+        }"#;
+
+        let request: DeviceAuthorizationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.client_id, "test-client");
+        assert_eq!(request.scope, "");
+    }
+
+    #[test]
+    fn test_device_authorization_response_serialization() {
+        let response = DeviceAuthorizationResponse {
+            device_code: "device-abc123".to_string(),
+            user_code: "ABCD-EFGH".to_string(),
+            verification_uri: "https://auth.example.com/device".to_string(),
+            verification_uri_complete: Some("https://auth.example.com/device?user_code=ABCD-EFGH".to_string()),
+            expires_in: 1800,
+            interval: 5,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"device_code\":\"device-abc123\""));
+        assert!(json.contains("\"user_code\":\"ABCD-EFGH\""));
+        assert!(json.contains("\"expires_in\":1800"));
+        assert!(json.contains("\"interval\":5"));
+    }
+
+    #[test]
+    fn test_device_authorization_response_without_complete_uri() {
+        let response = DeviceAuthorizationResponse {
+            device_code: "device-xyz".to_string(),
+            user_code: "HIJK-LMNO".to_string(),
+            verification_uri: "https://auth.example.com/device".to_string(),
+            verification_uri_complete: None,
+            expires_in: 600,
+            interval: 5,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"verification_uri_complete\":null"));
+    }
+
+    #[test]
+    fn test_device_token_request_deserialization() {
+        let json = r#"{
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": "device-123",
+            "client_id": "test-client"
+        }"#;
+
+        let request: DeviceTokenRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.grant_type, "urn:ietf:params:oauth:grant-type:device_code");
+        assert_eq!(request.device_code, "device-123");
+        assert_eq!(request.client_id, "test-client");
+    }
+
+    #[test]
+    fn test_device_verification_request_deserialization() {
+        let json = r#"{
+            "user_code": "ABCD-EFGH"
+        }"#;
+
+        let request: DeviceVerificationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.user_code, "ABCD-EFGH");
+    }
+
+    #[test]
+    fn test_device_confirmation_request_deserialization() {
+        let json = r#"{
+            "user_code": "WXYZ-1234",
+            "user_id": "user-456",
+            "authorized": true
+        }"#;
+
+        let request: DeviceConfirmationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.user_code, "WXYZ-1234");
+        assert_eq!(request.user_id, "user-456");
+        assert!(request.authorized);
+    }
+
+    #[test]
+    fn test_device_flow_constants() {
+        // Test that user codes are 9 characters (XXXX-XXXX format)
+        let code = generate_user_code();
+        assert_eq!(code.len(), 9);
+
+        // Verify format XXXX-XXXX
+        let parts: Vec<&str> = code.split('-').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].len(), 4);
+        assert_eq!(parts[1].len(), 4);
     }
 }

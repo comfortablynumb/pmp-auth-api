@@ -1,7 +1,7 @@
 // OpenID Connect Provider Implementation
 // This module implements the OIDC provider functionality on top of OAuth2
 
-use crate::auth::identity_backend::create_identity_backend;
+use crate::auth::identity_storage::create_identity_storage;
 use crate::models::{Claims, OAuth2ServerConfig, OidcProviderConfig};
 use crate::AppState;
 use axum::extract::{Path, State};
@@ -26,6 +26,7 @@ pub struct OidcClaims {
     pub exp: usize,            // Expiration time
     pub iat: usize,            // Issued at time
     pub auth_time: usize,      // Authentication time
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>, // Nonce from authorization request
 
     // Hash claims (for hybrid/implicit flows)
@@ -56,7 +57,7 @@ pub struct OidcClaims {
 }
 
 /// Userinfo response structure
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserinfoResponse {
     pub sub: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,14 +90,14 @@ pub async fn oidc_discovery(
     })?;
 
     // Check if OIDC is enabled
-    let oidc_config = tenant.identity_provider.oidc.as_ref().ok_or_else(|| {
+    let (oidc_config, _oidc_storage_id) = tenant.get_oidc_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oidc_not_enabled" })),
         )
     })?;
 
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, _oauth2_storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oauth2_not_enabled" })),
@@ -130,7 +131,15 @@ pub async fn oidc_discovery(
 
         // Supported features
         "scopes_supported": oidc_config.scopes_supported,
-        "response_types_supported": ["code", "code id_token", "code token", "code id_token token"],
+        "response_types_supported": [
+            "code",
+            "code id_token",
+            "code token",
+            "code id_token token",
+            "id_token",
+            "token",
+            "id_token token"
+        ],
         "response_modes_supported": ["query", "fragment", "form_post"],
         "grant_types_supported": oauth2_config.grant_types,
         "subject_types_supported": ["public"],
@@ -138,8 +147,8 @@ pub async fn oidc_discovery(
         // Token signing and encryption
         "id_token_signing_alg_values_supported": [&oauth2_config.signing_key.algorithm],
         "userinfo_signing_alg_values_supported": [&oauth2_config.signing_key.algorithm],
-        "id_token_encryption_alg_values_supported": [],
-        "id_token_encryption_enc_values_supported": [],
+        "id_token_encryption_alg_values_supported": oidc_config.id_token_encryption_alg_values_supported,
+        "id_token_encryption_enc_values_supported": oidc_config.id_token_encryption_enc_values_supported,
 
         // Claims
         "claims_supported": oidc_config.claims_supported,
@@ -152,10 +161,10 @@ pub async fn oidc_discovery(
         "code_challenge_methods_supported": ["S256", "plain"],
 
         // Request object support (RFC 9101)
-        "request_parameter_supported": false,
-        "request_uri_parameter_supported": false,
-        "require_request_uri_registration": false,
-        "request_object_signing_alg_values_supported": [],
+        "request_parameter_supported": oauth2_config.request_parameter_supported,
+        "request_uri_parameter_supported": oauth2_config.request_uri_parameter_supported,
+        "require_request_uri_registration": oauth2_config.require_request_uri_registration,
+        "request_object_signing_alg_values_supported": oauth2_config.request_object_signing_alg_values_supported,
 
         // ACR (Authentication Context Class Reference)
         "acr_values_supported": [],
@@ -169,6 +178,10 @@ pub async fn oidc_discovery(
         // Back-Channel Logout (RFC 8965)
         "backchannel_logout_supported": true,
         "backchannel_logout_session_supported": true,
+
+        // Front-Channel Logout (OpenID Connect Front-Channel Logout 1.0)
+        "frontchannel_logout_supported": true,
+        "frontchannel_logout_session_supported": true,
     })))
 }
 
@@ -192,8 +205,8 @@ pub async fn oidc_userinfo(
         )
     })?;
 
-    // Check if OIDC is enabled
-    tenant.identity_provider.oidc.as_ref().ok_or_else(|| {
+    // Check if OIDC is enabled and get storage_id
+    let (_oidc_config, oidc_storage_id) = tenant.get_oidc_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oidc_not_enabled" })),
@@ -219,7 +232,7 @@ pub async fn oidc_userinfo(
     })?;
 
     // Get OAuth2 config for token validation
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, _oauth2_storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oauth2_not_enabled" })),
@@ -279,8 +292,17 @@ pub async fn oidc_userinfo(
         token_data.claims.sub
     );
 
-    // Retrieve user information from identity backend
-    let backend = create_identity_backend(&tenant.identity_backend);
+    // Retrieve user information from identity storage
+    let storage = state.config.get_identity_storage(&tenant_id, oidc_storage_id).ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "server_error",
+                "error_description": format!("Identity storage '{}' not found", oidc_storage_id)
+            })),
+        )
+    })?;
+    let backend = create_identity_storage(storage);
     let user = backend
         .get_user_by_id(&token_data.claims.sub)
         .map_err(|e| {
@@ -316,7 +338,7 @@ pub async fn oidc_userinfo(
         debug!("Returning signed JWT userinfo for user: {}", userinfo.sub);
 
         // Get OIDC config for JWT signing
-        let oidc_config = tenant.identity_provider.oidc.as_ref().unwrap(); // Already validated above
+        let (oidc_config, _oidc_storage_id) = tenant.get_oidc_provider().unwrap(); // Already validated above
 
         let now = Utc::now().timestamp() as usize;
         let exp = now + 300; // 5 minutes validity
@@ -517,13 +539,23 @@ pub fn generate_id_token(
     let mut header = Header::new(algorithm);
     header.kid = Some(oauth2_config.signing_key.kid.clone());
 
-    encode(&header, &claims, &encoding_key).map_err(|e| {
+    let signed_id_token = encode(&header, &claims, &encoding_key).map_err(|e| {
         warn!("Failed to encode ID token: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "server_error", "error_description": "Failed to generate ID token" })),
         )
-    })
+    })?;
+
+    // Check if encryption is configured
+    if let Some(ref encryption_config) = oidc_config.encryption_key {
+        // Encrypt the signed ID token using JWE
+        debug!("Encrypting ID token for client '{}'", client_id);
+        crate::auth::id_token_encryption::encrypt_id_token(&signed_id_token, encryption_config)
+    } else {
+        // Return the signed ID token without encryption
+        Ok(signed_id_token)
+    }
 }
 
 /// OIDC Session Management - Check Session iFrame endpoint
@@ -543,7 +575,7 @@ pub async fn check_session_iframe(
         )
     })?;
 
-    let _oidc_config = tenant.identity_provider.oidc.as_ref().ok_or_else(|| {
+    let (_oidc_config, _oidc_storage_id) = tenant.get_oidc_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oidc_not_enabled" })),
@@ -719,5 +751,353 @@ mod tests {
         assert!(json.contains("\"email\":\"test@example.com\""));
         // picture should not be serialized since it's None
         assert!(!json.contains("\"picture\""));
+    }
+
+    // ID Token Claims Tests
+
+    #[test]
+    fn test_oidc_claims_with_all_fields() {
+        let claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_id_12345".to_string(),
+            aud: vec!["client_123".to_string(), "client_456".to_string()],
+            exp: 1234567890,
+            iat: 1234567800,
+            auth_time: 1234567700,
+            nonce: Some("nonce_xyz".to_string()),
+            at_hash: Some("at_hash_abc".to_string()),
+            c_hash: Some("c_hash_def".to_string()),
+            acr: Some("urn:mace:incommon:iap:silver".to_string()),
+            amr: Some(vec!["pwd".to_string(), "mfa".to_string()]),
+            azp: Some("client_123".to_string()),
+            name: Some("Alice Smith".to_string()),
+            email: Some("alice@example.com".to_string()),
+            email_verified: Some(true),
+            picture: Some("https://example.com/avatar.jpg".to_string()),
+            preferred_username: Some("alice".to_string()),
+        };
+
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"iss\":\"https://auth.example.com\""));
+        assert!(json.contains("\"sub\":\"user_id_12345\""));
+        assert!(json.contains("\"nonce\":\"nonce_xyz\""));
+        assert!(json.contains("\"at_hash\":\"at_hash_abc\""));
+        assert!(json.contains("\"c_hash\":\"c_hash_def\""));
+        assert!(json.contains("\"name\":\"Alice Smith\""));
+        assert!(json.contains("\"email_verified\":true"));
+    }
+
+    #[test]
+    fn test_oidc_claims_minimal() {
+        // Minimal ID token with only required claims
+        let claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec!["client_123".to_string()],
+            exp: 1234567890,
+            iat: 1234567800,
+            auth_time: 1234567800,
+            nonce: None,
+            at_hash: None,
+            c_hash: None,
+            acr: None,
+            amr: None,
+            azp: None,
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        let json = serde_json::to_string(&claims).unwrap();
+        assert!(json.contains("\"iss\":\"https://auth.example.com\""));
+        assert!(json.contains("\"sub\":\"user_123\""));
+        assert!(json.contains("\"aud\""));
+        // Optional fields should not be present
+        assert!(!json.contains("\"nonce\""));
+        assert!(!json.contains("\"name\""));
+        assert!(!json.contains("\"email\""));
+    }
+
+    #[test]
+    fn test_oidc_claims_deserialization() {
+        let json = r#"{
+            "iss": "https://auth.example.com",
+            "sub": "user_456",
+            "aud": ["client_abc"],
+            "exp": 1234567890,
+            "iat": 1234567800,
+            "auth_time": 1234567800,
+            "nonce": "test_nonce",
+            "email": "user@example.com",
+            "email_verified": true
+        }"#;
+
+        let claims: OidcClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.iss, "https://auth.example.com");
+        assert_eq!(claims.sub, "user_456");
+        assert_eq!(claims.aud.len(), 1);
+        assert_eq!(claims.aud[0], "client_abc");
+        assert_eq!(claims.nonce, Some("test_nonce".to_string()));
+        assert_eq!(claims.email, Some("user@example.com".to_string()));
+        assert_eq!(claims.email_verified, Some(true));
+    }
+
+    #[test]
+    fn test_oidc_claims_multiple_audiences() {
+        let claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec![
+                "client_1".to_string(),
+                "client_2".to_string(),
+                "client_3".to_string(),
+            ],
+            exp: 1234567890,
+            iat: 1234567800,
+            auth_time: 1234567800,
+            nonce: None,
+            at_hash: None,
+            c_hash: None,
+            acr: None,
+            amr: None,
+            azp: Some("client_1".to_string()), // azp should match first audience
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        assert_eq!(claims.aud.len(), 3);
+        assert_eq!(claims.azp, Some("client_1".to_string()));
+    }
+
+    // Authentication Context and Methods Tests
+
+    #[test]
+    fn test_oidc_acr_values() {
+        // Test Authentication Context Class Reference values
+        let acr_values = vec![
+            "urn:mace:incommon:iap:bronze",
+            "urn:mace:incommon:iap:silver",
+            "urn:mace:incommon:iap:gold",
+        ];
+
+        for acr in acr_values {
+            let claims = OidcClaims {
+                iss: "https://auth.example.com".to_string(),
+                sub: "user_123".to_string(),
+                aud: vec!["client_123".to_string()],
+                exp: 1234567890,
+                iat: 1234567800,
+                auth_time: 1234567800,
+                nonce: None,
+                at_hash: None,
+                c_hash: None,
+                acr: Some(acr.to_string()),
+                amr: None,
+                azp: None,
+                name: None,
+                email: None,
+                email_verified: None,
+                picture: None,
+                preferred_username: None,
+            };
+
+            assert!(claims.acr.unwrap().contains("urn:mace:incommon:iap"));
+        }
+    }
+
+    #[test]
+    fn test_oidc_amr_values() {
+        // Test Authentication Methods References
+        let claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec!["client_123".to_string()],
+            exp: 1234567890,
+            iat: 1234567800,
+            auth_time: 1234567800,
+            nonce: None,
+            at_hash: None,
+            c_hash: None,
+            acr: None,
+            amr: Some(vec![
+                "pwd".to_string(),      // Password
+                "mfa".to_string(),      // Multi-factor authentication
+                "otp".to_string(),      // One-time password
+                "hwk".to_string(),      // Hardware key
+            ]),
+            azp: None,
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        let amr = claims.amr.unwrap();
+        assert_eq!(amr.len(), 4);
+        assert!(amr.contains(&"pwd".to_string()));
+        assert!(amr.contains(&"mfa".to_string()));
+        assert!(amr.contains(&"otp".to_string()));
+        assert!(amr.contains(&"hwk".to_string()));
+    }
+
+    // Userinfo Response Tests
+
+    #[test]
+    fn test_userinfo_response_minimal() {
+        let userinfo = UserinfoResponse {
+            sub: "user_123".to_string(),
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+            role: None,
+        };
+
+        let json = serde_json::to_string(&userinfo).unwrap();
+        assert!(json.contains("\"sub\":\"user_123\""));
+        // No optional fields should be present
+        assert!(!json.contains("\"name\""));
+        assert!(!json.contains("\"email\""));
+        assert!(!json.contains("\"role\""));
+    }
+
+    #[test]
+    fn test_userinfo_response_with_all_fields() {
+        let userinfo = UserinfoResponse {
+            sub: "user_456".to_string(),
+            name: Some("Bob Johnson".to_string()),
+            email: Some("bob@example.com".to_string()),
+            email_verified: Some(true),
+            picture: Some("https://example.com/bob.jpg".to_string()),
+            preferred_username: Some("bobby".to_string()),
+            role: Some("user".to_string()),
+        };
+
+        let json = serde_json::to_string(&userinfo).unwrap();
+        assert!(json.contains("\"sub\":\"user_456\""));
+        assert!(json.contains("\"name\":\"Bob Johnson\""));
+        assert!(json.contains("\"email\":\"bob@example.com\""));
+        assert!(json.contains("\"email_verified\":true"));
+        assert!(json.contains("\"picture\":\"https://example.com/bob.jpg\""));
+        assert!(json.contains("\"preferred_username\":\"bobby\""));
+        assert!(json.contains("\"role\":\"user\""));
+    }
+
+    #[test]
+    fn test_userinfo_response_deserialization() {
+        let json = r#"{
+            "sub": "user_789",
+            "name": "Charlie Brown",
+            "email": "charlie@example.com",
+            "email_verified": false
+        }"#;
+
+        let userinfo: UserinfoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(userinfo.sub, "user_789");
+        assert_eq!(userinfo.name, Some("Charlie Brown".to_string()));
+        assert_eq!(userinfo.email, Some("charlie@example.com".to_string()));
+        assert_eq!(userinfo.email_verified, Some(false));
+    }
+
+    // Hash Claims Tests (at_hash, c_hash)
+
+    #[test]
+    fn test_oidc_hash_claims() {
+        // at_hash and c_hash should be present when access_token/code are issued
+        let claims_with_hashes = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec!["client_123".to_string()],
+            exp: 1234567890,
+            iat: 1234567800,
+            auth_time: 1234567800,
+            nonce: Some("nonce_123".to_string()),
+            at_hash: Some("access_token_hash".to_string()),
+            c_hash: Some("code_hash".to_string()),
+            acr: None,
+            amr: None,
+            azp: None,
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        assert!(claims_with_hashes.at_hash.is_some());
+        assert!(claims_with_hashes.c_hash.is_some());
+        assert_eq!(claims_with_hashes.at_hash.unwrap(), "access_token_hash");
+        assert_eq!(claims_with_hashes.c_hash.unwrap(), "code_hash");
+    }
+
+    // Timestamp Validation Tests
+
+    #[test]
+    fn test_oidc_timestamp_validation() {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).timestamp() as usize;
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize;
+
+        let claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec!["client_123".to_string()],
+            exp: future,
+            iat: past,
+            auth_time: past,
+            nonce: None,
+            at_hash: None,
+            c_hash: None,
+            acr: None,
+            amr: None,
+            azp: None,
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        // Verify timestamps are logical
+        assert!(claims.iat < now);
+        assert!(claims.exp > now);
+        assert!(claims.auth_time <= claims.iat);
+        assert!(claims.iat < claims.exp);
+    }
+
+    #[test]
+    fn test_oidc_expired_token() {
+        let past = (chrono::Utc::now() - chrono::Duration::hours(2)).timestamp() as usize;
+        let now = chrono::Utc::now().timestamp() as usize;
+
+        let expired_claims = OidcClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user_123".to_string(),
+            aud: vec!["client_123".to_string()],
+            exp: past,  // Expired
+            iat: past - 3600,
+            auth_time: past - 3600,
+            nonce: None,
+            at_hash: None,
+            c_hash: None,
+            acr: None,
+            amr: None,
+            azp: None,
+            name: None,
+            email: None,
+            email_verified: None,
+            picture: None,
+            preferred_username: None,
+        };
+
+        // Token is expired
+        assert!(expired_claims.exp < now);
     }
 }

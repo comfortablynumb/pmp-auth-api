@@ -18,44 +18,70 @@ pub async fn list_strategies(
         )
     })?;
 
-    let mut providers = Vec::new();
+    // Build providers map from the new structure
+    let mut providers = serde_json::Map::new();
 
-    if tenant.identity_provider.oauth2.is_some() {
-        providers.push(json!({
-            "type": "oauth2",
-            "authorize_endpoint": tenant.identity_provider.oauth2.as_ref().unwrap().authorize_endpoint,
-            "token_endpoint": tenant.identity_provider.oauth2.as_ref().unwrap().token_endpoint,
-        }));
+    for (provider_id, provider) in &tenant.identity_providers {
+        use crate::models::IdentityProvider;
+
+        let provider_info = match provider {
+            IdentityProvider::OAuth2 {
+                config,
+                identity_storage_id,
+            } => json!({
+                "type": "oauth2",
+                "authorize_endpoint": config.authorize_endpoint,
+                "token_endpoint": config.token_endpoint,
+                "identity_storage_id": identity_storage_id,
+            }),
+            IdentityProvider::Oidc {
+                config,
+                identity_storage_id,
+            } => json!({
+                "type": "oidc",
+                "issuer": config.issuer,
+                "userinfo_endpoint": config.userinfo_endpoint,
+                "identity_storage_id": identity_storage_id,
+            }),
+            IdentityProvider::Saml {
+                config,
+                identity_storage_id,
+            } => json!({
+                "type": "saml",
+                "entity_id": config.entity_id,
+                "sso_url": config.sso_url,
+                "identity_storage_id": identity_storage_id,
+            }),
+        };
+
+        providers.insert(provider_id.clone(), provider_info);
     }
 
-    if tenant.identity_provider.oidc.is_some() {
-        providers.push(json!({
-            "type": "oidc",
-            "issuer": tenant.identity_provider.oidc.as_ref().unwrap().issuer,
-            "userinfo_endpoint": tenant.identity_provider.oidc.as_ref().unwrap().userinfo_endpoint,
-        }));
+    // Build storage map
+    let mut storages = serde_json::Map::new();
+    for (storage_id, storage) in &tenant.identity_storage {
+        let storage_type = match storage {
+            crate::models::IdentityStorage::Ldap(_) => "ldap",
+            crate::models::IdentityStorage::Database(_) => "database",
+        };
+        storages.insert(storage_id.clone(), json!({ "type": storage_type }));
     }
 
-    if tenant.identity_provider.saml.is_some() {
-        providers.push(json!({
-            "type": "saml",
-            "entity_id": tenant.identity_provider.saml.as_ref().unwrap().entity_id,
-            "sso_url": tenant.identity_provider.saml.as_ref().unwrap().sso_url,
-        }));
+    // Also include global storages
+    for (storage_id, storage) in &state.config.identity_storage {
+        if !storages.contains_key(storage_id) {
+            let storage_type = match storage {
+                crate::models::IdentityStorage::Ldap(_) => "ldap",
+                crate::models::IdentityStorage::Database(_) => "database",
+            };
+            storages.insert(storage_id.clone(), json!({ "type": storage_type, "global": true }));
+        }
     }
-
-    let backend_type = match &tenant.identity_backend {
-        crate::models::IdentityBackend::OAuth2(_) => "oauth2",
-        crate::models::IdentityBackend::Ldap(_) => "ldap",
-        crate::models::IdentityBackend::Database(_) => "database",
-        crate::models::IdentityBackend::Federated(_) => "federated",
-        crate::models::IdentityBackend::Mock(_) => "mock",
-    };
 
     Ok(Json(json!({
         "tenant_id": tenant_id,
         "tenant_name": tenant.name,
         "identity_providers": providers,
-        "identity_backend": backend_type,
+        "identity_storage": storages,
     })))
 }

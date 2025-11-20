@@ -165,6 +165,8 @@ pub async fn create_client(
         backchannel_logout_session_required: false,
         frontchannel_logout_uri: None,
         frontchannel_logout_session_required: false,
+        request_uris: None,
+        jwks: None,
     };
 
     // Store client
@@ -402,7 +404,7 @@ pub struct ClientCreatedResponse {
 mod tests {
     use super::*;
     use crate::models::{
-        AppConfig, IdentityBackend, IdentityProviderConfig, MockBackendConfig, OAuth2ServerConfig,
+        AppConfig, DatabaseStorageConfig, IdentityStorage, OAuth2ServerConfig,
     };
     use crate::storage::memory::MemoryStorage;
     use crate::storage::StorageBackend;
@@ -417,27 +419,53 @@ mod tests {
                 id: "test-tenant".to_string(),
                 name: "Test Tenant".to_string(),
                 description: Some("Test description".to_string()),
-                identity_provider: IdentityProviderConfig {
-                    oauth2: Some(OAuth2ServerConfig {
-                        issuer: "http://localhost:3000".to_string(),
-                        grant_types: vec!["authorization_code".to_string()],
-                        token_endpoint: "/oauth/token".to_string(),
-                        authorize_endpoint: "/oauth/authorize".to_string(),
-                        jwks_endpoint: "/.well-known/jwks.json".to_string(),
-                        access_token_expiration_secs: 3600,
-                        refresh_token_expiration_secs: 2592000,
-                        signing_key: crate::models::JwkSigningConfig {
-                            algorithm: "RS256".to_string(),
-                            kid: "default-key".to_string(),
-                            public_key: "dummy-public-key".to_string(),
-                            private_key: "dummy-private-key".to_string(),
+                allowed_origins: vec![],
+                identity_providers: {
+                    let mut providers = HashMap::new();
+                    providers.insert(
+                        "default".to_string(),
+                        crate::models::IdentityProvider::OAuth2 {
+                            config: OAuth2ServerConfig {
+                                issuer: "http://localhost:3000".to_string(),
+                                grant_types: vec!["authorization_code".to_string()],
+                                token_endpoint: "/oauth/token".to_string(),
+                                authorize_endpoint: "/oauth/authorize".to_string(),
+                                jwks_endpoint: "/.well-known/jwks.json".to_string(),
+                                access_token_expiration_secs: 3600,
+                                refresh_token_expiration_secs: 2592000,
+                                signing_key: crate::models::JwkSigningConfig {
+                                    algorithm: "RS256".to_string(),
+                                    kid: "default-key".to_string(),
+                                    public_key: "dummy-public-key".to_string(),
+                                    private_key: "dummy-private-key".to_string(),
+                                },
+                                password_grant_enabled: false,
+                                request_parameter_supported: false,
+                                request_uri_parameter_supported: false,
+                                require_request_uri_registration: false,
+                                request_object_signing_alg_values_supported: vec![],
+                            },
+                            identity_storage_id: "default".to_string(),
                         },
-                        password_grant_enabled: false,
-                    }),
-                    oidc: None,
-                    saml: None,
+                    );
+                    providers
                 },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
+                identity_storage: {
+                    let mut storage_map = HashMap::new();
+                    storage_map.insert(
+                        "default".to_string(),
+                        IdentityStorage::Database(DatabaseStorageConfig {
+                            connection_url: "postgresql://localhost/test".to_string(),
+                            db_type: "postgres".to_string(),
+                            users_table: "users".to_string(),
+                            id_column: "id".to_string(),
+                            email_column: "email".to_string(),
+                            attribute_mappings: HashMap::new(),
+                        }),
+                    );
+                    storage_map
+                },
+                federation_providers: HashMap::new(),
                 api_keys: None,
                 active: true,
             },
@@ -445,6 +473,7 @@ mod tests {
 
         let config = Arc::new(AppConfig {
             tenants,
+            identity_storage: HashMap::new(),
             storage: crate::models::StorageConfig::Memory,
         });
 

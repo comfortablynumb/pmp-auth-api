@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::auth::identity_backend::BackendError;
+use crate::auth::identity_storage::StorageError;
 use ldap3::{Scope, SearchEntry};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -34,7 +34,7 @@ impl GroupResolver {
     }
 
     /// Get group information by DN
-    pub async fn get_group(&self, group_dn: &str) -> Result<GroupInfo, BackendError> {
+    pub async fn get_group(&self, group_dn: &str) -> Result<GroupInfo, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let (rs, _) = ldap
@@ -47,12 +47,12 @@ impl GroupResolver {
             .await
             .map_err(|e| {
                 error!("Failed to fetch group {}: {}", group_dn, e);
-                BackendError::ConnectionError(format!("Group search failed: {}", e))
+                StorageError::ConnectionError(format!("Group search failed: {}", e))
             })?
             .success()?;
 
         if rs.is_empty() {
-            return Err(BackendError::UserNotFound);
+            return Err(StorageError::UserNotFound);
         }
 
         let entry = SearchEntry::construct(rs[0].clone());
@@ -60,7 +60,7 @@ impl GroupResolver {
     }
 
     /// Get all groups a user belongs to (direct membership only)
-    pub async fn get_user_groups(&self, user_dn: &str) -> Result<Vec<GroupInfo>, BackendError> {
+    pub async fn get_user_groups(&self, user_dn: &str) -> Result<Vec<GroupInfo>, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let filter = format!("(member={})", user_dn);
@@ -79,7 +79,7 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Group search failed: {}", e)))?
             .success()?;
 
         let groups: Vec<GroupInfo> = rs
@@ -91,7 +91,7 @@ impl GroupResolver {
     }
 
     /// List all groups in the directory
-    pub async fn list_all_groups(&self) -> Result<Vec<GroupInfo>, BackendError> {
+    pub async fn list_all_groups(&self) -> Result<Vec<GroupInfo>, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let filter = "(objectClass=group)"; // AD groups
@@ -105,7 +105,7 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass", "description"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group list failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Group list failed: {}", e)))?
             .success()?;
 
         let groups: Vec<GroupInfo> = rs
@@ -117,7 +117,7 @@ impl GroupResolver {
     }
 
     /// Search groups by filter
-    pub async fn search_groups(&self, filter: &str) -> Result<Vec<GroupInfo>, BackendError> {
+    pub async fn search_groups(&self, filter: &str) -> Result<Vec<GroupInfo>, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let search_base = self.group_base_dn.as_ref().unwrap_or(&self.base_dn);
@@ -130,7 +130,7 @@ impl GroupResolver {
                 vec!["cn", "member", "memberOf", "objectClass"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Group search failed: {}", e)))?
             .success()?;
 
         let groups: Vec<GroupInfo> = rs
@@ -142,7 +142,7 @@ impl GroupResolver {
     }
 
     /// Get group members (users and groups)
-    pub async fn get_group_members(&self, group_dn: &str) -> Result<Vec<String>, BackendError> {
+    pub async fn get_group_members(&self, group_dn: &str) -> Result<Vec<String>, StorageError> {
         let group = self.get_group(group_dn).await?;
         Ok(group.members)
     }
@@ -190,7 +190,7 @@ impl NestedGroupResolver {
     }
 
     /// Get all groups a user belongs to, including nested groups
-    pub async fn get_all_user_groups(&self, user_dn: &str) -> Result<Vec<GroupInfo>, BackendError> {
+    pub async fn get_all_user_groups(&self, user_dn: &str) -> Result<Vec<GroupInfo>, StorageError> {
         let mut all_groups = HashSet::new();
         let mut groups_to_process = vec![user_dn.to_string()];
         let mut processed = HashSet::new();
@@ -252,7 +252,7 @@ impl NestedGroupResolver {
     }
 
     /// Get all members of a group, including nested groups
-    pub async fn get_all_group_members(&self, group_dn: &str) -> Result<Vec<String>, BackendError> {
+    pub async fn get_all_group_members(&self, group_dn: &str) -> Result<Vec<String>, StorageError> {
         let mut all_members = HashSet::new();
         let mut groups_to_process = vec![group_dn.to_string()];
         let mut processed = HashSet::new();
@@ -326,7 +326,7 @@ impl NestedGroupResolver {
     pub async fn get_group_hierarchy(
         &self,
         root_group_dn: &str,
-    ) -> Result<GroupHierarchy, BackendError> {
+    ) -> Result<GroupHierarchy, StorageError> {
         let root_group = self.resolver.get_group(root_group_dn).await?;
         let mut hierarchy = GroupHierarchy {
             group: root_group.clone(),
@@ -344,7 +344,7 @@ impl NestedGroupResolver {
         node: &mut GroupHierarchy,
         visited: &mut HashSet<String>,
         depth: usize,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), StorageError> {
         if depth >= self.max_depth {
             return Ok(());
         }

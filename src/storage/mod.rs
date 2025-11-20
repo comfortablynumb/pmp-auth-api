@@ -149,6 +149,44 @@ pub trait StorageBackend: Send + Sync {
     async fn update_user(&self, user_id: &str, data: UserData) -> Result<(), StorageError>;
 
     async fn delete_user(&self, user_id: &str) -> Result<(), StorageError>;
+
+    // Federated Identity operations
+    /// Store a federated identity link between a user and an external provider
+    async fn store_federated_identity(
+        &self,
+        data: FederatedIdentityData,
+    ) -> Result<(), StorageError>;
+
+    /// Get federated identity by provider and provider user ID
+    async fn get_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<Option<FederatedIdentityData>, StorageError>;
+
+    /// Get all federated identities for a user
+    async fn get_user_federated_identities(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<FederatedIdentityData>, StorageError>;
+
+    /// Delete a federated identity
+    async fn delete_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<(), StorageError>;
+
+    /// Get or create a user from federated authentication
+    /// This method handles the logic for creating new users or linking to existing ones
+    async fn get_or_create_federated_user(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_info: &crate::auth::federation::ProviderUserInfo,
+    ) -> Result<UserData, StorageError>;
 }
 
 /// Authorization code data for OAuth2 flow
@@ -267,6 +305,12 @@ pub struct OAuth2ClientData {
     /// Whether frontchannel_logout_uri requires session_id (sid) parameter
     #[serde(default)]
     pub frontchannel_logout_session_required: bool,
+    /// Request URIs for pre-registered request objects (RFC 9101)
+    #[serde(default)]
+    pub request_uris: Option<Vec<String>>,
+    /// JWKS for request object validation (inline keys)
+    #[serde(default)]
+    pub jwks: Option<serde_json::Value>,
 }
 
 /// OAuth2 client type
@@ -293,6 +337,33 @@ pub struct UserData {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub attributes: HashMap<String, String>,
+}
+
+/// Federated identity data - links a user to an external OAuth2/OIDC provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederatedIdentityData {
+    /// Unique ID for this federated identity
+    pub id: String,
+    /// Tenant ID
+    pub tenant_id: String,
+    /// Our internal user ID
+    pub user_id: String,
+    /// Provider ID (e.g., "google", "github", "azure-ad")
+    pub provider_id: String,
+    /// User ID from the external provider
+    pub provider_user_id: String,
+    /// Email from the external provider
+    pub provider_email: String,
+    /// Whether the email is verified by the provider
+    pub provider_email_verified: bool,
+    /// Full profile data from provider (JSON)
+    pub provider_profile_data: serde_json::Value,
+    /// When this identity was first linked
+    pub created_at: DateTime<Utc>,
+    /// When this identity was last updated
+    pub updated_at: DateTime<Utc>,
+    /// When the user last authenticated via this provider
+    pub last_login_at: Option<DateTime<Utc>>,
 }
 
 /// Storage errors

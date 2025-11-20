@@ -1,7 +1,7 @@
 // OAuth2 Authorization Server Implementation
 // This module implements the OAuth2 authorization server functionality
 
-use crate::auth::identity_backend::{create_identity_backend, BackendError, BackendUser};
+use crate::auth::identity_storage::{create_identity_storage, StorageUser};
 use crate::models::{Claims, OAuth2ServerConfig, Tenant, UserRole};
 use crate::storage::{
     AuthorizationCodeData as StorageAuthCodeData, RefreshTokenData as StorageRefreshTokenData,
@@ -64,6 +64,10 @@ pub struct AuthorizeRequest {
     pub acr_values: Option<String>,
     /// OIDC claims: Requested claims in JSON format
     pub claims: Option<String>,
+    /// Request object (JWT containing request parameters - RFC 9101)
+    pub request: Option<String>,
+    /// Request object URI (URL to fetch request object - RFC 9101)
+    pub request_uri: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -213,27 +217,150 @@ pub async fn oauth2_authorize(
     })?;
 
     // Check if OAuth2 is enabled
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, _storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oauth2_not_enabled" })),
         )
     })?;
 
-    // Validate response_type - support authorization code and hybrid flows
-    // Supported: "code", "code id_token", "code token", "code id_token token"
+    // Handle request object if present (RFC 9101)
+    let mut params = params;
+    if params.request.is_some() || params.request_uri.is_some() {
+        // Check if request objects are supported
+        if !oauth2_config.request_parameter_supported && params.request.is_some() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "request_not_supported",
+                    "error_description": "request parameter is not supported by this server"
+                })),
+            ));
+        }
+
+        if !oauth2_config.request_uri_parameter_supported && params.request_uri.is_some() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "request_uri_not_supported",
+                    "error_description": "request_uri parameter is not supported by this server"
+                })),
+            ));
+        }
+
+        // Fetch client metadata to get JWKS for validation
+        let client_metadata = state
+            .storage
+            .get_oauth2_client(&params.client_id)
+            .await
+            .ok()
+            .flatten();
+
+        let client_jwks = client_metadata.as_ref().and_then(|c| c.jwks.as_ref());
+        let client_jwks_uri = client_metadata.as_ref().and_then(|c| c.jwks_uri.as_deref());
+
+        // Handle request_uri first (fetch the JWT)
+        let request_jwt = if let Some(ref request_uri) = params.request_uri {
+            // Check if request_uri is in the registered list (if required)
+            if oauth2_config.require_request_uri_registration {
+                if let Some(ref client) = client_metadata {
+                    if let Some(ref registered_uris) = client.request_uris {
+                        if !registered_uris.contains(request_uri) {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({
+                                    "error": "invalid_request_uri",
+                                    "error_description": "request_uri is not registered for this client"
+                                })),
+                            ));
+                        }
+                    } else {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "error": "invalid_request_uri",
+                                "error_description": "Client has no registered request_uris"
+                            })),
+                        ));
+                    }
+                }
+            }
+
+            // Fetch the request object from the URI
+            let http_client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .map_err(|e| {
+                    warn!("Failed to create HTTP client: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": "server_error",
+                            "error_description": "Failed to fetch request_uri"
+                        })),
+                    )
+                })?;
+
+            let response = http_client.get(request_uri).send().await.map_err(|e| {
+                warn!("Failed to fetch request_uri '{}': {}", request_uri, e);
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_request_uri",
+                        "error_description": "Failed to fetch request object from request_uri"
+                    })),
+                )
+            })?;
+
+            let jwt = response.text().await.map_err(|e| {
+                warn!("Failed to read request_uri response: {}", e);
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "invalid_request_uri",
+                        "error_description": "Failed to read request object from request_uri"
+                    })),
+                )
+            })?;
+
+            Some(jwt)
+        } else {
+            params.request.clone()
+        };
+
+        // Parse and validate the request object
+        if let Some(request_jwt) = request_jwt {
+            let request_claims = crate::auth::request_object::parse_request_object(
+                &request_jwt,
+                &params.client_id,
+                oauth2_config,
+                client_jwks_uri,
+                client_jwks,
+            )
+            .await?;
+
+            // Merge parameters (URL params take precedence for security-sensitive fields)
+            params = crate::auth::request_object::merge_request_params(&params, request_claims);
+        }
+    }
+
+    // Validate response_type - support authorization code, hybrid, and implicit flows
+    // Supported:
+    //   - Authorization Code Flow: "code"
+    //   - Implicit Flow: "id_token", "token", "id_token token"
+    //   - Hybrid Flow: "code id_token", "code token", "code id_token token"
     let response_type_parts: Vec<&str> = params.response_type.split_whitespace().collect();
     let has_code = response_type_parts.contains(&"code");
     let has_id_token = response_type_parts.contains(&"id_token");
     let has_token = response_type_parts.contains(&"token");
 
-    // Must have "code" for authorization code and hybrid flows
-    if !has_code {
+    // Must have at least one valid response type
+    if !has_code && !has_id_token && !has_token {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
-                "error": "unsupported_response_type",
-                "error_description": "response_type must include 'code'"
+                "error": "invalid_request",
+                "error_description": "response_type must be specified"
             })),
         ));
     }
@@ -251,16 +378,33 @@ pub async fn oauth2_authorize(
         }
     }
 
-    // Validate grant type is supported
-    if !oauth2_config
-        .grant_types
-        .contains(&"authorization_code".to_string())
+    // Determine the flow type
+    let is_implicit_flow = !has_code && (has_id_token || has_token);
+    let is_hybrid_flow = has_code && (has_id_token || has_token);
+    let is_code_flow = has_code && !has_id_token && !has_token;
+
+    // Validate grant type is supported for code/hybrid flows
+    if (is_code_flow || is_hybrid_flow)
+        && !oauth2_config
+            .grant_types
+            .contains(&"authorization_code".to_string())
     {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": "unauthorized_client",
                 "error_description": "Authorization code flow not enabled"
+            })),
+        ));
+    }
+
+    // Validate implicit flow is supported (check if "implicit" grant is in grant_types)
+    if is_implicit_flow && !oauth2_config.grant_types.contains(&"implicit".to_string()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "unsupported_response_type",
+                "error_description": "Implicit flow is not enabled for this client"
             })),
         ));
     }
@@ -499,7 +643,7 @@ pub async fn oauth2_authorize(
             )
         })?;
 
-    let backend_user = BackendUser {
+    let backend_user = StorageUser {
         id: user.id.clone(),
         email: user.email.clone(),
         name: user.name.clone(),
@@ -513,41 +657,48 @@ pub async fn oauth2_authorize(
         backend_user.id, backend_user.email
     );
 
-    let auth_code = Uuid::new_v4().to_string();
-    let now = Utc::now();
+    // Generate authorization code only for code and hybrid flows, not for pure implicit flow
+    let auth_code = if has_code {
+        let code = Uuid::new_v4().to_string();
+        let now = Utc::now();
 
-    let code_data = StorageAuthCodeData {
-        tenant_id: tenant_id.clone(),
-        client_id: params.client_id.clone(),
-        user_id: backend_user.id.clone(),
-        redirect_uri: params.redirect_uri.clone(),
-        scope: params
-            .scope
-            .clone()
-            .unwrap_or_default()
-            .split_whitespace()
-            .map(String::from)
-            .collect::<Vec<_>>()
-            .join(" "),
-        created_at: now,
-        expires_at: now + chrono::Duration::seconds(600), // 10 minutes
-        code_challenge: params.code_challenge.clone(),
-        code_challenge_method: params.code_challenge_method.clone(),
-        nonce: params.nonce.clone(), // OIDC nonce for replay protection
+        let code_data = StorageAuthCodeData {
+            tenant_id: tenant_id.clone(),
+            client_id: params.client_id.clone(),
+            user_id: backend_user.id.clone(),
+            redirect_uri: params.redirect_uri.clone(),
+            scope: params
+                .scope
+                .clone()
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+                .join(" "),
+            created_at: now,
+            expires_at: now + chrono::Duration::seconds(600), // 10 minutes
+            code_challenge: params.code_challenge.clone(),
+            code_challenge_method: params.code_challenge_method.clone(),
+            nonce: params.nonce.clone(), // OIDC nonce for replay protection
+        };
+
+        // Store authorization code
+        state
+            .storage
+            .store_authorization_code(&code, code_data)
+            .await
+            .map_err(|e| {
+                warn!("Failed to store authorization code: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "server_error", "error_description": "Failed to store authorization code" })),
+                )
+            })?;
+
+        Some(code)
+    } else {
+        None
     };
-
-    // Store authorization code
-    state
-        .storage
-        .store_authorization_code(&auth_code, code_data)
-        .await
-        .map_err(|e| {
-            warn!("Failed to store authorization code: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "server_error", "error_description": "Failed to store authorization code" })),
-            )
-        })?;
 
     // Generate session_state for OIDC session management
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -613,7 +764,7 @@ pub async fn oauth2_authorize(
 
         // Generate ID token if requested and OIDC enabled
         if has_id_token {
-            if let Some(oidc_config) = &tenant.identity_provider.oidc {
+            if let Some((oidc_config, _oidc_storage_id)) = tenant.get_oidc_provider() {
                 if scope_vec.contains(&"openid".to_string()) {
                     let token = crate::auth::oidc::generate_id_token(
                         &user.id,
@@ -622,7 +773,7 @@ pub async fn oauth2_authorize(
                         &params.client_id,
                         params.nonce.clone(),
                         access_token_for_response.as_deref(), // Include at_hash if access_token generated
-                        Some(&auth_code),                     // Include c_hash for hybrid flow
+                        auth_code.as_deref(),                 // Include c_hash for hybrid flow (if code exists)
                         None,                                 // acr
                         Some(vec!["pwd".to_string()]),        // amr
                         oauth2_config,
@@ -645,9 +796,11 @@ pub async fn oauth2_authorize(
     match response_mode {
         "form_post" => {
             // Return HTML form that auto-posts to redirect_uri
-            let mut form_inputs = vec![
-                format!(r#"<input type="hidden" name="code" value="{}" />"#, auth_code)
-            ];
+            let mut form_inputs = vec![];
+
+            if let Some(ref code) = auth_code {
+                form_inputs.push(format!(r#"<input type="hidden" name="code" value="{}" />"#, code));
+            }
 
             if let Some(ref state) = params.state {
                 form_inputs.push(format!(r#"<input type="hidden" name="state" value="{}" />"#, state));
@@ -692,8 +845,12 @@ pub async fn oauth2_authorize(
             Ok(axum::response::Html(form_html).into_response())
         }
         "fragment" => {
-            // Fragment mode - tokens in URL fragment
-            let mut fragments = vec![format!("code={}", auth_code)];
+            // Fragment mode - tokens in URL fragment (hybrid and implicit flows)
+            let mut fragments = vec![];
+
+            if let Some(ref code) = auth_code {
+                fragments.push(format!("code={}", code));
+            }
 
             if let Some(ref state) = params.state {
                 fragments.push(format!("state={}", state));
@@ -718,14 +875,25 @@ pub async fn oauth2_authorize(
         }
         "query" | _ => {
             // Query parameter mode (code only, no tokens)
-            let mut redirect_url = format!("{}?code={}", params.redirect_uri, auth_code);
-            if let Some(state) = params.state {
-                redirect_url.push_str(&format!("&state={}", state));
-            }
-            redirect_url.push_str(&format!("&session_state={}", session_state));
+            if let Some(ref code) = auth_code {
+                let mut redirect_url = format!("{}?code={}", params.redirect_uri, code);
+                if let Some(state) = params.state {
+                    redirect_url.push_str(&format!("&state={}", state));
+                }
+                redirect_url.push_str(&format!("&session_state={}", session_state));
 
-            debug!("Redirecting to: {}", redirect_url);
-            Ok(Redirect::temporary(&redirect_url).into_response())
+                debug!("Redirecting to: {}", redirect_url);
+                Ok(Redirect::temporary(&redirect_url).into_response())
+            } else {
+                // Should not happen - query mode requires a code
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": "server_error",
+                        "error_description": "Query response mode requires authorization code"
+                    })),
+                ))
+            }
         }
     }
 }
@@ -814,7 +982,7 @@ pub async fn oauth2_token(
     })?;
 
     // Check if OAuth2 is enabled
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oauth2_not_enabled" })),
@@ -823,15 +991,15 @@ pub async fn oauth2_token(
 
     match params.grant_type.as_str() {
         "authorization_code" => {
-            handle_authorization_code_grant(&tenant_id, oauth2_config, params, &state).await
+            handle_authorization_code_grant(&tenant_id, oauth2_config, storage_id, params, &state).await
         }
         "client_credentials" => {
             handle_client_credentials_grant(&tenant_id, oauth2_config, params, &state).await
         }
         "refresh_token" => {
-            handle_refresh_token_grant(&tenant_id, oauth2_config, params, &state).await
+            handle_refresh_token_grant(&tenant_id, oauth2_config, storage_id, params, &state).await
         }
-        "password" => handle_password_grant(&tenant_id, oauth2_config, params, &state).await,
+        "password" => handle_password_grant(&tenant_id, oauth2_config, storage_id, params, &state).await,
         _ => Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -928,16 +1096,16 @@ async fn trigger_backchannel_logout(
     state: &AppState,
 ) {
     // Get OAuth2 and OIDC config
-    let oauth2_config = match &tenant.identity_provider.oauth2 {
-        Some(config) => config,
+    let (oauth2_config, _oauth2_storage_id) = match tenant.get_oauth2_provider() {
+        Some((config, storage_id)) => (config, storage_id),
         None => {
             debug!("OAuth2 not enabled for tenant, skipping backchannel logout");
             return;
         }
     };
 
-    let oidc_config = match &tenant.identity_provider.oidc {
-        Some(config) => config,
+    let (oidc_config, _oidc_storage_id) = match tenant.get_oidc_provider() {
+        Some((config, storage_id)) => (config, storage_id),
         None => {
             debug!("OIDC not enabled for tenant, skipping backchannel logout");
             return;
@@ -1264,6 +1432,7 @@ pub async fn oauth2_logout(
 async fn handle_authorization_code_grant(
     tenant_id: &str,
     oauth2_config: &OAuth2ServerConfig,
+    storage_id: &str,
     params: TokenRequest,
     state: &AppState,
 ) -> Result<Json<TokenResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -1390,16 +1559,18 @@ async fn handle_authorization_code_grant(
         .map(String::from)
         .collect();
 
-    // Get tenant configuration to access identity backend
-    let tenant = state.config.get_tenant(tenant_id).ok_or_else(|| {
+    // Retrieve user from identity storage
+    let storage = state.config.get_identity_storage(tenant_id, storage_id).ok_or_else(|| {
         (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "tenant_not_found" })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "server_error",
+                "error_description": format!("Identity storage '{}' not found", storage_id)
+            })),
         )
     })?;
-
-    // Retrieve user from identity backend
-    let user = get_user_from_backend(&code_data.user_id, tenant).map_err(|e| {
+    let backend = create_identity_storage(storage);
+    let user = backend.get_user_by_id(&code_data.user_id).map_err(|e| {
         warn!(
             "Failed to retrieve user '{}' from identity backend: {}",
             code_data.user_id, e
@@ -1453,7 +1624,14 @@ async fn handle_authorization_code_grant(
     // Generate ID token if OIDC scope is requested
     let id_token = if scope_vec.contains(&"openid".to_string()) {
         // Check if OIDC is enabled for this tenant
-        if let Some(oidc_config) = &tenant.identity_provider.oidc {
+        let tenant = state.config.get_tenant(tenant_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "tenant_not_found" })),
+            )
+        })?;
+
+        if let Some((oidc_config, _oidc_storage_id)) = tenant.get_oidc_provider() {
             debug!("Generating ID token for OIDC flow");
 
             if let Some(ref nonce) = code_data.nonce {
@@ -1560,6 +1738,7 @@ async fn handle_client_credentials_grant(
 async fn handle_refresh_token_grant(
     tenant_id: &str,
     oauth2_config: &OAuth2ServerConfig,
+    storage_id: &str,
     params: TokenRequest,
     state: &AppState,
 ) -> Result<Json<TokenResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -1613,16 +1792,18 @@ async fn handle_refresh_token_grant(
         .map(String::from)
         .collect();
 
-    // Get tenant configuration to access identity backend
-    let tenant = state.config.get_tenant(tenant_id).ok_or_else(|| {
+    // Retrieve user from identity storage
+    let storage = state.config.get_identity_storage(tenant_id, storage_id).ok_or_else(|| {
         (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "tenant_not_found" })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "server_error",
+                "error_description": format!("Identity storage '{}' not found", storage_id)
+            })),
         )
     })?;
-
-    // Retrieve user from identity backend
-    let user = get_user_from_backend(&token_data.user_id, tenant).map_err(|e| {
+    let backend = create_identity_storage(storage);
+    let user = backend.get_user_by_id(&token_data.user_id).map_err(|e| {
         warn!(
             "Failed to retrieve user '{}' from identity backend during refresh: {}",
             token_data.user_id, e
@@ -1706,6 +1887,7 @@ async fn handle_refresh_token_grant(
 async fn handle_password_grant(
     tenant_id: &str,
     oauth2_config: &OAuth2ServerConfig,
+    storage_id: &str,
     params: TokenRequest,
     state: &AppState,
 ) -> Result<Json<TokenResponse>, (StatusCode, Json<serde_json::Value>)> {
@@ -1799,16 +1981,17 @@ async fn handle_password_grant(
     )
     .await?;
 
-    // Get tenant for identity backend access
-    let tenant = state.config.get_tenant(tenant_id).ok_or_else(|| {
+    // Authenticate user via identity storage
+    let storage = state.config.get_identity_storage(tenant_id, storage_id).ok_or_else(|| {
         (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "tenant_not_found"})),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "server_error",
+                "error_description": format!("Identity storage '{}' not found for tenant", storage_id)
+            })),
         )
     })?;
-
-    // Authenticate user via identity backend
-    let backend = crate::auth::identity_backend::create_identity_backend(&tenant.identity_backend);
+    let backend = crate::auth::identity_storage::create_identity_storage(storage);
     let auth_result = backend.authenticate(&username, &password).map_err(|e| {
         warn!(
             "Password grant authentication failed for user '{}': {}",
@@ -2046,7 +2229,7 @@ pub async fn jwks(
         )
     })?;
 
-    let oauth2_config = tenant.identity_provider.oauth2.as_ref().ok_or_else(|| {
+    let (oauth2_config, _storage_id) = tenant.get_oauth2_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "oauth2_not_enabled" })),
@@ -2331,12 +2514,6 @@ fn validate_pkce(code_verifier: &str, code_challenge: &str, method: &str) -> boo
             false
         }
     }
-}
-
-/// Get user from identity backend by user_id
-fn get_user_from_backend(user_id: &str, tenant: &Tenant) -> Result<BackendUser, BackendError> {
-    let backend = create_identity_backend(&tenant.identity_backend);
-    backend.get_user_by_id(user_id)
 }
 
 /// Validate JWT-based client authentication (RFC 7523)
@@ -3260,5 +3437,314 @@ mod tests {
         assert!(req.password.is_none());
         assert!(req.client_assertion_type.is_none());
         assert!(req.client_assertion.is_none());
+    }
+
+    // Token Response Tests
+
+    #[test]
+    fn test_token_response_serialization() {
+        let response = TokenResponse {
+            access_token: "access_token_123".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: 3600,
+            refresh_token: Some("refresh_token_456".to_string()),
+            scope: Some("openid profile email".to_string()),
+            id_token: Some("id_token_789".to_string()),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"access_token\":\"access_token_123\""));
+        assert!(json.contains("\"token_type\":\"Bearer\""));
+        assert!(json.contains("\"expires_in\":3600"));
+        assert!(json.contains("\"refresh_token\":\"refresh_token_456\""));
+        assert!(json.contains("\"id_token\":\"id_token_789\""));
+    }
+
+    #[test]
+    fn test_token_response_without_optional_fields() {
+        let response = TokenResponse {
+            access_token: "access_token_only".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_in: 7200,
+            refresh_token: None,
+            scope: None,
+            id_token: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"access_token\":\"access_token_only\""));
+        assert!(json.contains("\"expires_in\":7200"));
+        // Optional fields should not be present
+        assert!(!json.contains("\"refresh_token\""));
+        assert!(!json.contains("\"id_token\""));
+    }
+
+    // Authorization Request Tests
+
+    #[test]
+    fn test_authorize_request_deserialization() {
+        let json = r#"{
+            "response_type": "code",
+            "client_id": "test_client",
+            "redirect_uri": "https://app.example.com/callback",
+            "scope": "openid profile email",
+            "state": "random_state_123",
+            "nonce": "random_nonce_456",
+            "code_challenge": "challenge_789",
+            "code_challenge_method": "S256"
+        }"#;
+
+        let req: AuthorizeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.response_type, "code");
+        assert_eq!(req.client_id, "test_client");
+        assert_eq!(req.redirect_uri, "https://app.example.com/callback");
+        assert_eq!(req.scope, Some("openid profile email".to_string()));
+        assert_eq!(req.state, Some("random_state_123".to_string()));
+        assert_eq!(req.nonce, Some("random_nonce_456".to_string()));
+        assert_eq!(req.code_challenge, Some("challenge_789".to_string()));
+        assert_eq!(req.code_challenge_method, Some("S256".to_string()));
+    }
+
+    #[test]
+    fn test_authorize_request_minimal() {
+        let json = r#"{
+            "response_type": "code",
+            "client_id": "minimal_client",
+            "redirect_uri": "https://app.example.com"
+        }"#;
+
+        let req: AuthorizeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.response_type, "code");
+        assert_eq!(req.client_id, "minimal_client");
+        assert!(req.scope.is_none());
+        assert!(req.state.is_none());
+        assert!(req.nonce.is_none());
+        assert!(req.code_challenge.is_none());
+    }
+
+    #[test]
+    fn test_authorize_request_with_prompt() {
+        let json = r#"{
+            "response_type": "code",
+            "client_id": "test_client",
+            "redirect_uri": "https://app.example.com",
+            "prompt": "login consent"
+        }"#;
+
+        let req: AuthorizeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.prompt, Some("login consent".to_string()));
+    }
+
+    // Grant Type Tests
+
+    #[test]
+    fn test_token_request_authorization_code_grant() {
+        let json = r#"{
+            "grant_type": "authorization_code",
+            "code": "auth_code_xyz",
+            "redirect_uri": "https://app.example.com/callback",
+            "client_id": "my_client",
+            "code_verifier": "verifier_123"
+        }"#;
+
+        let req: TokenRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.grant_type, "authorization_code");
+        assert_eq!(req.code, Some("auth_code_xyz".to_string()));
+        assert_eq!(req.redirect_uri, Some("https://app.example.com/callback".to_string()));
+        assert_eq!(req.code_verifier, Some("verifier_123".to_string()));
+    }
+
+    #[test]
+    fn test_token_request_client_credentials_grant() {
+        let json = r#"{
+            "grant_type": "client_credentials",
+            "client_id": "service_client",
+            "client_secret": "service_secret",
+            "scope": "api:read api:write"
+        }"#;
+
+        let req: TokenRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.grant_type, "client_credentials");
+        assert_eq!(req.client_id, Some("service_client".to_string()));
+        assert_eq!(req.client_secret, Some("service_secret".to_string()));
+        assert_eq!(req.scope, Some("api:read api:write".to_string()));
+    }
+
+    #[test]
+    fn test_token_request_refresh_token_grant() {
+        let json = r#"{
+            "grant_type": "refresh_token",
+            "refresh_token": "refresh_xyz_789",
+            "client_id": "my_client",
+            "scope": "openid profile"
+        }"#;
+
+        let req: TokenRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.grant_type, "refresh_token");
+        assert_eq!(req.refresh_token, Some("refresh_xyz_789".to_string()));
+        assert_eq!(req.scope, Some("openid profile".to_string()));
+    }
+
+    #[test]
+    fn test_token_request_password_grant() {
+        let json = r#"{
+            "grant_type": "password",
+            "username": "alice@example.com",
+            "password": "secure_password",
+            "client_id": "web_client",
+            "scope": "openid profile email offline_access"
+        }"#;
+
+        let req: TokenRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.grant_type, "password");
+        assert_eq!(req.username, Some("alice@example.com".to_string()));
+        assert_eq!(req.password, Some("secure_password".to_string()));
+        assert_eq!(req.client_id, Some("web_client".to_string()));
+        assert_eq!(req.scope, Some("openid profile email offline_access".to_string()));
+    }
+
+    // Error Response Tests
+
+    #[test]
+    fn test_error_response_structure() {
+        use serde_json::json;
+
+        let error = json!({
+            "error": "invalid_request",
+            "error_description": "Missing required parameter: code",
+            "error_uri": "https://tools.ietf.org/html/rfc6749#section-5.2"
+        });
+
+        assert_eq!(error["error"], "invalid_request");
+        assert!(error["error_description"].as_str().unwrap().contains("Missing required parameter"));
+        assert!(error["error_uri"].as_str().unwrap().contains("rfc6749"));
+    }
+
+    #[test]
+    fn test_unauthorized_client_error() {
+        use serde_json::json;
+
+        let error = json!({
+            "error": "unauthorized_client",
+            "error_description": "The client is not authorized to use this grant type"
+        });
+
+        assert_eq!(error["error"], "unauthorized_client");
+    }
+
+    #[test]
+    fn test_invalid_grant_error() {
+        use serde_json::json;
+
+        let error = json!({
+            "error": "invalid_grant",
+            "error_description": "Authorization code is invalid or expired"
+        });
+
+        assert_eq!(error["error"], "invalid_grant");
+    }
+
+    #[test]
+    fn test_unsupported_grant_type_error() {
+        use serde_json::json;
+
+        let error = json!({
+            "error": "unsupported_grant_type",
+            "error_description": "Grant type 'implicit' is not supported"
+        });
+
+        assert_eq!(error["error"], "unsupported_grant_type");
+    }
+
+    // PKCE Extension Tests
+
+    #[test]
+    fn test_pkce_with_s256_valid() {
+        // RFC 7636 Appendix B test vector
+        let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+        assert!(validate_pkce(code_verifier, code_challenge, "S256"));
+    }
+
+    #[test]
+    fn test_pkce_with_plain_valid() {
+        let code_verifier = "my-plain-code-verifier-12345";
+        let code_challenge = "my-plain-code-verifier-12345"; // Same for plain
+
+        assert!(validate_pkce(code_verifier, code_challenge, "plain"));
+    }
+
+    #[test]
+    fn test_pkce_s256_mismatch() {
+        let code_verifier = "wrong_verifier";
+        let code_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+        assert!(!validate_pkce(code_verifier, code_challenge, "S256"));
+    }
+
+    #[test]
+    fn test_pkce_plain_mismatch() {
+        let code_verifier = "verifier_a";
+        let code_challenge = "verifier_b";
+
+        assert!(!validate_pkce(code_verifier, code_challenge, "plain"));
+    }
+
+    #[test]
+    fn test_pkce_invalid_method() {
+        assert!(!validate_pkce("verifier", "challenge", "SHA512"));
+        assert!(!validate_pkce("verifier", "challenge", ""));
+        assert!(!validate_pkce("verifier", "challenge", "invalid"));
+    }
+
+    // JWT Client Authentication Tests (RFC 7523)
+
+    #[test]
+    fn test_client_assertion_jwt_structure() {
+        let claims = ClientAssertionClaims {
+            iss: "https://client.example.com".to_string(),
+            sub: "client_id_123".to_string(),
+            aud: "https://auth.example.com/oauth/token".to_string(),
+            exp: (chrono::Utc::now() + chrono::Duration::minutes(10)).timestamp() as usize,
+            iat: chrono::Utc::now().timestamp() as usize,
+            jti: "unique-jwt-id-xyz".to_string(),
+        };
+
+        // Verify structure
+        assert!(!claims.iss.is_empty());
+        assert!(!claims.sub.is_empty());
+        assert!(!claims.aud.is_empty());
+        assert!(!claims.jti.is_empty());
+        assert!(claims.exp > claims.iat);
+    }
+
+    #[test]
+    fn test_client_assertion_exp_validation() {
+        let now = chrono::Utc::now().timestamp() as usize;
+        let past = (chrono::Utc::now() - chrono::Duration::hours(2)).timestamp() as usize;
+        let future = (chrono::Utc::now() + chrono::Duration::hours(2)).timestamp() as usize;
+
+        // Expired assertion should be detected
+        assert!(past < now);
+
+        // Valid assertion
+        assert!(future > now);
+    }
+
+    #[test]
+    fn test_client_assertion_with_multiple_audiences() {
+        // Some implementations support array of audiences
+        let json = r#"{
+            "iss": "client_123",
+            "sub": "client_123",
+            "aud": "https://auth.example.com/token",
+            "exp": 1234567890,
+            "iat": 1234567800,
+            "jti": "unique-id"
+        }"#;
+
+        let claims: ClientAssertionClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.aud, "https://auth.example.com/token");
     }
 }

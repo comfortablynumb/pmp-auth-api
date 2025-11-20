@@ -30,7 +30,7 @@ pub async fn saml_metadata(
     })?;
 
     // Check if SAML is configured
-    let saml_config = tenant.identity_provider.saml.as_ref().ok_or_else(|| {
+    let (saml_config, _storage_id) = tenant.get_saml_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "saml_not_configured" })),
@@ -70,7 +70,7 @@ pub async fn saml_sso_post(
     })?;
 
     // Check if SAML is configured
-    let saml_config = tenant.identity_provider.saml.as_ref().ok_or_else(|| {
+    let (saml_config, _storage_id) = tenant.get_saml_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "saml_not_configured" })),
@@ -128,7 +128,7 @@ pub async fn saml_sso_redirect(
     })?;
 
     // Check if SAML is configured
-    let saml_config = tenant.identity_provider.saml.as_ref().ok_or_else(|| {
+    let (saml_config, _storage_id) = tenant.get_saml_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "saml_not_configured" })),
@@ -178,7 +178,7 @@ pub async fn saml_slo(
     })?;
 
     // Check if SAML is configured
-    let _saml_config = tenant.identity_provider.saml.as_ref().ok_or_else(|| {
+    let (_saml_config, _storage_id) = tenant.get_saml_provider().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "saml_not_configured" })),

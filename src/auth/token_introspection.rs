@@ -150,7 +150,7 @@ async fn introspect_token(
     state: &AppState,
 ) -> Result<IntrospectionResponse, String> {
     // Try OAuth2 signing key first
-    if let Some(oauth2_config) = &tenant.identity_provider.oauth2 {
+    if let Some((oauth2_config, _storage_id)) = tenant.get_oauth2_provider() {
         let key_result = decode_with_key(token, &oauth2_config.signing_key.public_key);
 
         if let Ok(claims) = key_result {

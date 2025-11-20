@@ -87,6 +87,7 @@ utoipa-swagger-ui = { version = "7", features = ["axum"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+openssl = { version = "0.10.75", features = ["vendored"] }
 
 [dev-dependencies]
 # Testing

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::auth::identity_backend::{AuthenticationResult, BackendError, BackendUser};
-use crate::models::{LdapBackendConfig, UserRole};
+use crate::auth::identity_storage::{AuthenticationResult, StorageError, StorageUser};
+use crate::models::{LdapStorageConfig, UserRole};
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -16,7 +16,7 @@ pub struct LdapConnection {
 }
 
 impl LdapConnection {
-    pub fn new(config: &LdapBackendConfig) -> Self {
+    pub fn new(config: &LdapStorageConfig) -> Self {
         let mut settings = LdapConnSettings::new();
         settings = settings.set_conn_timeout(Duration::from_secs(10));
 
@@ -34,12 +34,12 @@ impl LdapConnection {
     }
 
     /// Create an LDAP connection
-    pub async fn connect(&self) -> Result<ldap3::Ldap, BackendError> {
+    pub async fn connect(&self) -> Result<ldap3::Ldap, StorageError> {
         let (conn, mut ldap) = LdapConnAsync::with_settings(self.settings.clone(), &self.url)
             .await
             .map_err(|e| {
                 error!("LDAP connection failed: {}", e);
-                BackendError::ConnectionError(format!("Failed to connect to LDAP server: {}", e))
+                StorageError::ConnectionError(format!("Failed to connect to LDAP server: {}", e))
             })?;
 
         // Spawn connection driver
@@ -55,7 +55,7 @@ impl LdapConnection {
                 .await
                 .map_err(|e| {
                     error!("LDAP bind failed: {}", e);
-                    BackendError::ConnectionError(format!("Failed to bind to LDAP server: {}", e))
+                    StorageError::ConnectionError(format!("Failed to bind to LDAP server: {}", e))
                 })?;
         }
 
@@ -65,12 +65,12 @@ impl LdapConnection {
 
 /// Complete LDAP backend implementation
 pub struct LdapBackendImpl {
-    config: LdapBackendConfig,
+    config: LdapStorageConfig,
     connection: LdapConnection,
 }
 
 impl LdapBackendImpl {
-    pub fn new(config: LdapBackendConfig) -> Self {
+    pub fn new(config: LdapStorageConfig) -> Self {
         let connection = LdapConnection::new(&config);
         Self { config, connection }
     }
@@ -80,7 +80,7 @@ impl LdapBackendImpl {
         &self,
         username: &str,
         password: &str,
-    ) -> Result<AuthenticationResult, BackendError> {
+    ) -> Result<AuthenticationResult, StorageError> {
         debug!("Attempting LDAP authentication for user: {}", username);
 
         // First, find the user's DN
@@ -92,7 +92,7 @@ impl LdapBackendImpl {
                 .await
                 .map_err(|e| {
                     error!("LDAP connection failed during authentication: {}", e);
-                    BackendError::ConnectionError(format!("Connection failed: {}", e))
+                    StorageError::ConnectionError(format!("Connection failed: {}", e))
                 })?;
 
         tokio::spawn(async move {
@@ -118,18 +118,18 @@ impl LdapBackendImpl {
                     })
                 } else {
                     warn!("LDAP bind failed for user: {}", username);
-                    Err(BackendError::AuthenticationFailed)
+                    Err(StorageError::AuthenticationFailed)
                 }
             }
             Err(e) => {
                 error!("LDAP bind error for user {}: {}", username, e);
-                Err(BackendError::AuthenticationFailed)
+                Err(StorageError::AuthenticationFailed)
             }
         }
     }
 
     /// Find user's DN by username
-    async fn find_user_dn(&self, username: &str) -> Result<String, BackendError> {
+    async fn find_user_dn(&self, username: &str) -> Result<String, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         // Replace {username} placeholder in user filter
@@ -150,13 +150,13 @@ impl LdapBackendImpl {
             .await
             .map_err(|e| {
                 error!("LDAP search failed: {}", e);
-                BackendError::ConnectionError(format!("Search failed: {}", e))
+                StorageError::ConnectionError(format!("Search failed: {}", e))
             })?
             .success()?;
 
         if rs.is_empty() {
             warn!("No user found with username: {}", username);
-            return Err(BackendError::UserNotFound);
+            return Err(StorageError::UserNotFound);
         }
 
         let entry = SearchEntry::construct(rs[0].clone());
@@ -164,7 +164,7 @@ impl LdapBackendImpl {
     }
 
     /// Get user by username
-    async fn get_user_by_username(&self, username: &str) -> Result<BackendUser, BackendError> {
+    async fn get_user_by_username(&self, username: &str) -> Result<StorageUser, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let filter = self
@@ -188,20 +188,20 @@ impl LdapBackendImpl {
             .await
             .map_err(|e| {
                 error!("LDAP search failed: {}", e);
-                BackendError::ConnectionError(format!("Search failed: {}", e))
+                StorageError::ConnectionError(format!("Search failed: {}", e))
             })?
             .success()?;
 
         if rs.is_empty() {
-            return Err(BackendError::UserNotFound);
+            return Err(StorageError::UserNotFound);
         }
 
         let entry = SearchEntry::construct(rs[0].clone());
-        self.entry_to_backend_user(entry)
+        self.entry_to_storage_user(entry)
     }
 
     /// Get user by ID
-    pub async fn get_user_by_id(&self, user_id: &str) -> Result<BackendUser, BackendError> {
+    pub async fn get_user_by_id(&self, user_id: &str) -> Result<StorageUser, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let id_attr = self.config.id_attribute.as_deref().unwrap_or("uid");
@@ -217,19 +217,19 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(&self.config.base_dn, Scope::Subtree, &filter, attributes)
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Search failed: {}", e)))?
             .success()?;
 
         if rs.is_empty() {
-            return Err(BackendError::UserNotFound);
+            return Err(StorageError::UserNotFound);
         }
 
         let entry = SearchEntry::construct(rs[0].clone());
-        self.entry_to_backend_user(entry)
+        self.entry_to_storage_user(entry)
     }
 
     /// Get user by email
-    pub async fn get_user_by_email(&self, email: &str) -> Result<BackendUser, BackendError> {
+    pub async fn get_user_by_email(&self, email: &str) -> Result<StorageUser, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let email_attr = self.config.email_attribute.as_deref().unwrap_or("mail");
@@ -245,19 +245,19 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(&self.config.base_dn, Scope::Subtree, &filter, attributes)
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Search failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Search failed: {}", e)))?
             .success()?;
 
         if rs.is_empty() {
-            return Err(BackendError::UserNotFound);
+            return Err(StorageError::UserNotFound);
         }
 
         let entry = SearchEntry::construct(rs[0].clone());
-        self.entry_to_backend_user(entry)
+        self.entry_to_storage_user(entry)
     }
 
-    /// Convert LDAP entry to BackendUser
-    fn entry_to_backend_user(&self, entry: SearchEntry) -> Result<BackendUser, BackendError> {
+    /// Convert LDAP entry to StorageUser
+    fn entry_to_storage_user(&self, entry: SearchEntry) -> Result<StorageUser, StorageError> {
         let id_attr = self.config.id_attribute.as_deref().unwrap_or("uid");
         let email_attr = self.config.email_attribute.as_deref().unwrap_or("mail");
         let name_attr = self.config.name_attribute.as_deref().unwrap_or("cn");
@@ -267,7 +267,7 @@ impl LdapBackendImpl {
             .get(id_attr)
             .and_then(|v| v.first())
             .ok_or_else(|| {
-                BackendError::ConfigurationError(format!("Missing {} attribute", id_attr))
+                StorageError::ConfigurationError(format!("Missing {} attribute", id_attr))
             })?
             .clone();
 
@@ -276,7 +276,7 @@ impl LdapBackendImpl {
             .get(email_attr)
             .and_then(|v| v.first())
             .ok_or_else(|| {
-                BackendError::ConfigurationError(format!("Missing {} attribute", email_attr))
+                StorageError::ConfigurationError(format!("Missing {} attribute", email_attr))
             })?
             .clone();
 
@@ -293,7 +293,7 @@ impl LdapBackendImpl {
         // Determine role based on group membership if configured
         let role = self.determine_role(&entry);
 
-        Ok(BackendUser {
+        Ok(StorageUser {
             id,
             email,
             name,
@@ -318,7 +318,7 @@ impl LdapBackendImpl {
     }
 
     /// Get user's groups
-    pub async fn get_user_groups(&self, user_dn: &str) -> Result<Vec<String>, BackendError> {
+    pub async fn get_user_groups(&self, user_dn: &str) -> Result<Vec<String>, StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         let filter = format!("(member={})", user_dn);
@@ -331,7 +331,7 @@ impl LdapBackendImpl {
         let (rs, _) = ldap
             .search(group_base, Scope::Subtree, &filter, vec!["cn", "dn"])
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Group search failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Group search failed: {}", e)))?
             .success()?;
 
         let groups: Vec<String> = rs
@@ -343,12 +343,12 @@ impl LdapBackendImpl {
     }
 
     /// Validate user exists
-    pub async fn validate_user(&self, email: &str) -> Result<BackendUser, BackendError> {
+    pub async fn validate_user(&self, email: &str) -> Result<StorageUser, StorageError> {
         self.get_user_by_email(email).await
     }
 
     /// Health check - test LDAP connection
-    pub async fn health_check(&self) -> Result<(), BackendError> {
+    pub async fn health_check(&self) -> Result<(), StorageError> {
         let mut ldap = self.connection.connect().await?;
 
         // Simple search to verify connection
@@ -360,11 +360,11 @@ impl LdapBackendImpl {
                 vec!["1.1"],
             )
             .await
-            .map_err(|e| BackendError::ConnectionError(format!("Health check failed: {}", e)))?
+            .map_err(|e| StorageError::ConnectionError(format!("Health check failed: {}", e)))?
             .success()?;
 
         if rs.is_empty() {
-            Err(BackendError::ConnectionError(
+            Err(StorageError::ConnectionError(
                 "Base DN not accessible".to_string(),
             ))
         } else {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_ldap_connection_creation() {
-        let config = LdapBackendConfig {
+        let config = LdapStorageConfig {
             url: "ldap://localhost:389".to_string(),
             bind_dn: Some("cn=admin,dc=example,dc=com".to_string()),
             bind_password: Some("password".to_string()),

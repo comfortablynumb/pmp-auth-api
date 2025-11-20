@@ -88,6 +88,22 @@ PMP Auth API is a complete identity and access management (IAM) platform that pr
 - **Configurable Polling**: Default 5-second interval
 - **Enterprise Support**: Perfect for smart TVs, IoT devices, CLI tools
 
+#### OAuth2 Federation (External Identity Providers)
+- **Login with External Providers**: Google, GitHub, Azure AD, Okta, and more
+- **Trait-Based Architecture**: Easily add new providers by implementing `FederationProvider` trait
+- **User Linking**: Automatically link multiple providers to the same user via email
+- **Profile Synchronization**: Keep user data in sync with provider profiles
+- **Email Verification**: Trust email verification from external providers
+- **Supported Providers**:
+  - ✅ Google OAuth2/OIDC
+  - ✅ GitHub OAuth2
+  - 🔜 Azure AD (easily extensible)
+  - 🔜 Okta (easily extensible)
+  - 🔜 Auth0 (easily extensible)
+- **Token Issuance**: Always issues OUR tokens (not provider tokens) for consistent session management
+- **Storage**: Dedicated `federated_identities` table with proper indexing and foreign keys
+- **Security**: State-based CSRF protection, session expiration, one-time use states
+
 ## Enterprise Security Features
 
 ### 🔒 Multi-Factor Authentication (MFA)

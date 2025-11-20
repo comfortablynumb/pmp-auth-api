@@ -292,15 +292,6 @@ fn create_tenant_routes(state: AppState) -> Router {
             "/:tenant_id/oauth/check_session_iframe",
             get(auth::check_session_iframe),
         )
-        // OAuth2 Federation endpoints (external IdP integration)
-        .route(
-            "/:tenant_id/oauth/federation/authorize",
-            get(auth::federation_authorize),
-        )
-        .route(
-            "/:tenant_id/oauth/federation/callback",
-            get(auth::federation_callback),
-        )
         // API Key Management endpoints
         .route("/:tenant_id/api-keys/create", post(auth::create_api_key))
         .route("/:tenant_id/api-keys/list", get(auth::list_api_keys))
@@ -325,6 +316,15 @@ fn create_tenant_routes(state: AppState) -> Router {
         .route(
             "/:tenant_id/oauth/device/confirm",
             post(auth::device_confirm),
+        )
+        // OAuth2 Federation endpoints (external provider authentication)
+        .route(
+            "/:tenant_id/federate/:provider_id/login",
+            get(auth::federation_login),
+        )
+        .route(
+            "/:tenant_id/federate/:provider_id/callback",
+            get(auth::federation_callback),
         )
         .with_state(state)
 }
@@ -395,7 +395,7 @@ fn log_available_routes(config: &crate::models::AppConfig) {
         tracing::info!("🏢 Tenant: {} ({})", tenant_id, tenant.name);
 
         // OAuth2 routes
-        if tenant.identity_provider.oauth2.is_some() {
+        if tenant.get_oauth2_provider().is_some() {
             tracing::info!("  📝 OAuth2 Authorization Server:");
             tracing::info!("    GET    /api/v1/tenant/{}/strategies", tenant_id);
             tracing::info!("    GET    /api/v1/tenant/{}/oauth/authorize", tenant_id);
@@ -409,7 +409,7 @@ fn log_available_routes(config: &crate::models::AppConfig) {
         }
 
         // OIDC routes
-        if tenant.identity_provider.oidc.is_some() {
+        if tenant.get_oidc_provider().is_some() {
             tracing::info!("  🔐 OpenID Connect:");
             tracing::info!(
                 "    GET    /api/v1/tenant/{}/.well-known/openid-configuration",
@@ -430,7 +430,7 @@ fn log_available_routes(config: &crate::models::AppConfig) {
         }
 
         // SAML routes
-        if tenant.identity_provider.saml.is_some() {
+        if tenant.get_saml_provider().is_some() {
             tracing::info!("  🎫 SAML 2.0 Identity Provider:");
             tracing::info!("    GET    /api/v1/tenant/{}/saml/metadata", tenant_id);
             tracing::info!("    GET    /api/v1/tenant/{}/saml/sso", tenant_id);
@@ -439,7 +439,7 @@ fn log_available_routes(config: &crate::models::AppConfig) {
         }
 
         // Device flow routes (always available for OAuth2 tenants)
-        if tenant.identity_provider.oauth2.is_some() {
+        if tenant.get_oauth2_provider().is_some() {
             tracing::info!("  📱 Device Authorization Grant (RFC 8628):");
             tracing::info!(
                 "    POST   /api/v1/tenant/{}/oauth/device/authorize",
@@ -454,6 +454,21 @@ fn log_available_routes(config: &crate::models::AppConfig) {
                 "    POST   /api/v1/tenant/{}/oauth/device/confirm",
                 tenant_id
             );
+        }
+
+        // Federation routes
+        if !tenant.federation_providers.is_empty() {
+            tracing::info!("  🌐 OAuth2 Federation (External Providers):");
+            for provider_id in tenant.federation_providers.keys() {
+                tracing::info!(
+                    "    GET    /api/v1/tenant/{}/federate/{}/login",
+                    tenant_id, provider_id
+                );
+                tracing::info!(
+                    "    GET    /api/v1/tenant/{}/federate/{}/callback",
+                    tenant_id, provider_id
+                );
+            }
         }
 
         tracing::info!("");

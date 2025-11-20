@@ -39,32 +39,34 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Arc<AppConfig>, String> {
     for (tenant_id, tenant) in &config.tenants {
         let mut providers = Vec::new();
 
-        if tenant.identity_provider.oauth2.is_some() {
-            providers.push("OAuth2");
+        for (provider_id, provider) in &tenant.identity_providers {
+            use crate::models::IdentityProvider;
+
+            let provider_type = match provider {
+                IdentityProvider::OAuth2 { .. } => "OAuth2",
+                IdentityProvider::Oidc { .. } => "OIDC",
+                IdentityProvider::Saml { .. } => "SAML",
+            };
+
+            providers.push(format!("{}:{}", provider_id, provider_type));
         }
 
-        if tenant.identity_provider.oidc.is_some() {
-            providers.push("OIDC");
+        // Collect all available storages (tenant + global)
+        let mut storage_list = Vec::new();
+        for (storage_id, storage) in &tenant.identity_storage {
+            let storage_type = match storage {
+                crate::models::IdentityStorage::Ldap(_) => "LDAP",
+                crate::models::IdentityStorage::Database(_) => "Database",
+            };
+            storage_list.push(format!("{}:{}", storage_id, storage_type));
         }
-
-        if tenant.identity_provider.saml.is_some() {
-            providers.push("SAML");
-        }
-
-        let backend_type = match &tenant.identity_backend {
-            crate::models::IdentityBackend::OAuth2(_) => "OAuth2",
-            crate::models::IdentityBackend::Ldap(_) => "LDAP",
-            crate::models::IdentityBackend::Database(_) => "Database",
-            crate::models::IdentityBackend::Federated(_) => "Federated",
-            crate::models::IdentityBackend::Mock(_) => "Mock",
-        };
 
         info!(
-            "  Tenant '{}' ({}): Providers: [{}], Backend: {}",
+            "  Tenant '{}' ({}): Providers: [{}], Storage: [{}]",
             tenant_id,
             tenant.name,
             providers.join(", "),
-            backend_type
+            storage_list.join(", ")
         );
     }
 
@@ -142,8 +144,7 @@ mod tests {
     use super::*;
     use crate::models::tenant::Tenant;
     use crate::models::{
-        IdentityBackend, IdentityProviderConfig, JwkSigningConfig, MockBackendConfig,
-        OAuth2ServerConfig,
+        DatabaseStorageConfig, IdentityStorage, JwkSigningConfig, OAuth2ServerConfig,
     };
     use std::collections::HashMap;
 
@@ -155,8 +156,9 @@ tenants:
     id: test-tenant
     name: "Test Tenant"
     active: true
-    identity_provider:
-      oauth2:
+    identity_providers:
+      default:
+        type: oauth2
         issuer: "https://test.example.com"
         grant_types:
           - "authorization_code"
@@ -170,9 +172,12 @@ tenants:
           kid: "test-key"
           private_key: "/path/to/private.pem"
           public_key: "/path/to/public.pem"
-    identity_backend:
-      type: mock
-      users: []
+        identity_storage_id: "default"
+    identity_storage:
+      default:
+        type: database
+        connection_url: "postgresql://localhost/test"
+        db_type: "postgres"
 "#;
 
         let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
@@ -181,7 +186,7 @@ tenants:
 
         let tenant = config.get_tenant("test-tenant").unwrap();
         assert_eq!(tenant.name, "Test Tenant");
-        assert!(tenant.identity_provider.oauth2.is_some());
+        assert!(tenant.get_oauth2_provider().is_some());
     }
 
     #[test]
@@ -195,8 +200,9 @@ tenants:
     id: test-tenant
     name: "Test Tenant"
     active: true
-    identity_provider:
-      oauth2:
+    identity_providers:
+      default:
+        type: oauth2
         issuer: "${env:TEST_ISSUER}"
         grant_types:
           - "authorization_code"
@@ -210,17 +216,21 @@ tenants:
           kid: "test-key"
           private_key: "/path/to/private.pem"
           public_key: "/path/to/public.pem"
-    identity_backend:
-      type: mock
-      users: []
+        identity_storage_id: "default"
+    identity_storage:
+      default:
+        type: database
+        connection_url: "postgresql://localhost/test"
+        db_type: "postgres"
 "#;
 
         let interpolated = env_interpolation::interpolate_env_vars(yaml).unwrap();
         let config: AppConfig = serde_yaml::from_str(&interpolated).unwrap();
 
         let tenant = config.get_tenant("test-tenant").unwrap();
+        let (oauth2_config, _) = tenant.get_oauth2_provider().unwrap();
         assert_eq!(
-            tenant.identity_provider.oauth2.as_ref().unwrap().issuer,
+            oauth2_config.issuer,
             "https://env-test.example.com"
         );
 
@@ -238,8 +248,9 @@ tenants:
     id: test-tenant
     name: "Test Tenant"
     active: true
-    identity_provider:
-      oauth2:
+    identity_providers:
+      default:
+        type: oauth2
         issuer: "${env:MISSING_VAR:https://default.example.com}"
         grant_types:
           - "authorization_code"
@@ -253,17 +264,21 @@ tenants:
           kid: "test-key"
           private_key: "/path/to/private.pem"
           public_key: "/path/to/public.pem"
-    identity_backend:
-      type: mock
-      users: []
+        identity_storage_id: "default"
+    identity_storage:
+      default:
+        type: database
+        connection_url: "postgresql://localhost/test"
+        db_type: "postgres"
 "#;
 
         let interpolated = env_interpolation::interpolate_env_vars(yaml).unwrap();
         let config: AppConfig = serde_yaml::from_str(&interpolated).unwrap();
 
         let tenant = config.get_tenant("test-tenant").unwrap();
+        let (oauth2_config, _) = tenant.get_oauth2_provider().unwrap();
         assert_eq!(
-            tenant.identity_provider.oauth2.as_ref().unwrap().issuer,
+            oauth2_config.issuer,
             "https://default.example.com"
         );
     }
@@ -272,6 +287,7 @@ tenants:
     fn test_config_validation_empty_tenants() {
         let config = AppConfig {
             tenants: HashMap::new(),
+            identity_storage: HashMap::new(),
             storage: crate::models::StorageConfig::Memory,
         };
 
@@ -284,8 +300,22 @@ tenants:
     fn test_config_validation_no_identity_provider() {
         let mut config = AppConfig {
             tenants: HashMap::new(),
+            identity_storage: HashMap::new(),
             storage: crate::models::StorageConfig::Memory,
         };
+
+        let mut storage_map = HashMap::new();
+        storage_map.insert(
+            "default".to_string(),
+            IdentityStorage::Database(DatabaseStorageConfig {
+                connection_url: "postgresql://localhost/test".to_string(),
+                db_type: "postgres".to_string(),
+                users_table: "users".to_string(),
+                id_column: "id".to_string(),
+                email_column: "email".to_string(),
+                attribute_mappings: HashMap::new(),
+            }),
+        );
 
         config.tenants.insert(
             "test".to_string(),
@@ -293,12 +323,10 @@ tenants:
                 id: "test".to_string(),
                 name: "Test".to_string(),
                 description: None,
-                identity_provider: IdentityProviderConfig {
-                    oauth2: None,
-                    oidc: None,
-                    saml: None,
-                },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
+                allowed_origins: vec![],
+                identity_providers: HashMap::new(), // Empty providers map for validation test
+                identity_storage: storage_map,
+                federation_providers: HashMap::new(),
                 api_keys: None,
                 active: true,
             },
@@ -313,6 +341,19 @@ tenants:
 
     #[test]
     fn test_config_get_tenant() {
+        let mut storage_map = HashMap::new();
+        storage_map.insert(
+            "default".to_string(),
+            IdentityStorage::Database(DatabaseStorageConfig {
+                connection_url: "postgresql://localhost/test".to_string(),
+                db_type: "postgres".to_string(),
+                users_table: "users".to_string(),
+                id_column: "id".to_string(),
+                email_column: "email".to_string(),
+                attribute_mappings: HashMap::new(),
+            }),
+        );
+
         let mut tenants = HashMap::new();
         tenants.insert(
             "test".to_string(),
@@ -320,27 +361,39 @@ tenants:
                 id: "test".to_string(),
                 name: "Test".to_string(),
                 description: None,
-                identity_provider: IdentityProviderConfig {
-                    oauth2: Some(OAuth2ServerConfig {
-                        issuer: "https://test.example.com".to_string(),
-                        grant_types: vec!["authorization_code".to_string()],
-                        token_endpoint: "/oauth/token".to_string(),
-                        authorize_endpoint: "/oauth/authorize".to_string(),
-                        jwks_endpoint: "/.well-known/jwks.json".to_string(),
-                        access_token_expiration_secs: 3600,
-                        refresh_token_expiration_secs: 86400,
-                        signing_key: JwkSigningConfig {
-                            algorithm: "RS256".to_string(),
-                            kid: "test-key".to_string(),
-                            private_key: "/path/to/private.pem".to_string(),
-                            public_key: "/path/to/public.pem".to_string(),
+                allowed_origins: vec![],
+                identity_providers: {
+                    let mut providers = HashMap::new();
+                    providers.insert(
+                        "default".to_string(),
+                        crate::models::IdentityProvider::OAuth2 {
+                            config: OAuth2ServerConfig {
+                                issuer: "https://test.example.com".to_string(),
+                                grant_types: vec!["authorization_code".to_string()],
+                                token_endpoint: "/oauth/token".to_string(),
+                                authorize_endpoint: "/oauth/authorize".to_string(),
+                                jwks_endpoint: "/.well-known/jwks.json".to_string(),
+                                access_token_expiration_secs: 3600,
+                                refresh_token_expiration_secs: 86400,
+                                signing_key: JwkSigningConfig {
+                                    algorithm: "RS256".to_string(),
+                                    kid: "test-key".to_string(),
+                                    private_key: "/path/to/private.pem".to_string(),
+                                    public_key: "/path/to/public.pem".to_string(),
+                                },
+                                password_grant_enabled: false,
+                                request_parameter_supported: false,
+                                request_uri_parameter_supported: false,
+                                require_request_uri_registration: false,
+                                request_object_signing_alg_values_supported: vec![],
+                            },
+                            identity_storage_id: "default".to_string(),
                         },
-                        password_grant_enabled: false,
-                    }),
-                    oidc: None,
-                    saml: None,
+                    );
+                    providers
                 },
-                identity_backend: IdentityBackend::Mock(MockBackendConfig { users: vec![] }),
+                identity_storage: storage_map,
+                federation_providers: HashMap::new(),
                 api_keys: None,
                 active: true,
             },
@@ -348,6 +401,7 @@ tenants:
 
         let config = AppConfig {
             tenants,
+            identity_storage: HashMap::new(),
             storage: crate::models::StorageConfig::Memory,
         };
 
@@ -356,5 +410,97 @@ tenants:
 
         let missing_tenant = config.get_tenant("missing");
         assert!(missing_tenant.is_none());
+    }
+
+    #[test]
+    fn test_global_storage_inheritance() {
+        let yaml = r#"
+# Global storage that can be inherited by all tenants
+identity_storage:
+  shared-db:
+    type: database
+    connection_url: "postgresql://localhost/shared"
+    db_type: "postgres"
+  shared-ldap:
+    type: ldap
+    url: "ldap://localhost:389"
+    base_dn: "dc=example,dc=com"
+
+tenants:
+  tenant1:
+    id: tenant1
+    name: "Tenant 1"
+    active: true
+    identity_providers:
+      default:
+        type: oauth2
+        issuer: "https://tenant1.example.com"
+        grant_types:
+          - "authorization_code"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "tenant1-key"
+          private_key: "/path/to/private.pem"
+          public_key: "/path/to/public.pem"
+        # References global storage
+        identity_storage_id: "shared-db"
+    # No tenant-specific storage defined
+
+  tenant2:
+    id: tenant2
+    name: "Tenant 2"
+    active: true
+    identity_providers:
+      default:
+        type: oauth2
+        issuer: "https://tenant2.example.com"
+        grant_types:
+          - "authorization_code"
+        token_endpoint: "/oauth/token"
+        authorize_endpoint: "/oauth/authorize"
+        jwks_endpoint: "/.well-known/jwks.json"
+        access_token_expiration_secs: 3600
+        refresh_token_expiration_secs: 86400
+        signing_key:
+          algorithm: "RS256"
+          kid: "tenant2-key"
+          private_key: "/path/to/private.pem"
+          public_key: "/path/to/public.pem"
+        # References tenant-specific storage
+        identity_storage_id: "local-db"
+    # Tenant-specific storage (overrides global)
+    identity_storage:
+      local-db:
+        type: database
+        connection_url: "postgresql://localhost/tenant2"
+        db_type: "postgres"
+"#;
+
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Verify global storage is loaded
+        assert_eq!(config.identity_storage.len(), 2);
+        assert!(config.identity_storage.contains_key("shared-db"));
+        assert!(config.identity_storage.contains_key("shared-ldap"));
+
+        // Verify tenant1 can access global storage
+        let storage1 = config.get_identity_storage("tenant1", "shared-db");
+        assert!(storage1.is_some());
+
+        // Verify tenant2 uses tenant-specific storage (not global)
+        let storage2 = config.get_identity_storage("tenant2", "local-db");
+        assert!(storage2.is_some());
+
+        // Verify tenant2 can also fallback to global storage
+        let storage2_global = config.get_identity_storage("tenant2", "shared-ldap");
+        assert!(storage2_global.is_some());
+
+        // Verify validation passes
+        assert!(config.validate().is_ok());
     }
 }

@@ -744,6 +744,8 @@ impl StorageBackend for PostgresStorage {
                     backchannel_logout_session_required: row.get("backchannel_logout_session_required"),
                     frontchannel_logout_uri: row.get("frontchannel_logout_uri"),
                     frontchannel_logout_session_required: row.get("frontchannel_logout_session_required"),
+                    request_uris: None, // TODO: Add to database schema
+                    jwks: None,          // TODO: Add to database schema
                 }))
             }
             None => Ok(None),
@@ -810,6 +812,8 @@ impl StorageBackend for PostgresStorage {
                 backchannel_logout_session_required: row.get("backchannel_logout_session_required"),
                 frontchannel_logout_uri: row.get("frontchannel_logout_uri"),
                 frontchannel_logout_session_required: row.get("frontchannel_logout_session_required"),
+                request_uris: row.get("request_uris"),
+                jwks: row.get("jwks"),
             });
         }
 
@@ -1105,5 +1109,258 @@ impl StorageBackend for PostgresStorage {
         }
 
         Ok(())
+    }
+
+    // Federated Identity operations
+    async fn store_federated_identity(
+        &self,
+        data: FederatedIdentityData,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO federated_identities
+            (id, tenant_id, user_id, provider_id, provider_user_id, provider_email,
+             provider_email_verified, provider_profile_data, created_at, updated_at, last_login_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (tenant_id, provider_id, provider_user_id)
+            DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                provider_email = EXCLUDED.provider_email,
+                provider_email_verified = EXCLUDED.provider_email_verified,
+                provider_profile_data = EXCLUDED.provider_profile_data,
+                updated_at = EXCLUDED.updated_at,
+                last_login_at = EXCLUDED.last_login_at
+            "#,
+        )
+        .bind(&data.id)
+        .bind(&data.tenant_id)
+        .bind(&data.user_id)
+        .bind(&data.provider_id)
+        .bind(&data.provider_user_id)
+        .bind(&data.provider_email)
+        .bind(data.provider_email_verified)
+        .bind(&data.provider_profile_data)
+        .bind(data.created_at)
+        .bind(data.updated_at)
+        .bind(data.last_login_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to store federated identity: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    async fn get_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<Option<FederatedIdentityData>, StorageError> {
+        let result = sqlx::query(
+            r#"
+            SELECT id, tenant_id, user_id, provider_id, provider_user_id, provider_email,
+                   provider_email_verified, provider_profile_data, created_at, updated_at, last_login_at
+            FROM federated_identities
+            WHERE tenant_id = $1 AND provider_id = $2 AND provider_user_id = $3
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(provider_id)
+        .bind(provider_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to get federated identity: {}", e))
+        })?;
+
+        match result {
+            Some(row) => Ok(Some(FederatedIdentityData {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                user_id: row.get("user_id"),
+                provider_id: row.get("provider_id"),
+                provider_user_id: row.get("provider_user_id"),
+                provider_email: row.get("provider_email"),
+                provider_email_verified: row.get("provider_email_verified"),
+                provider_profile_data: row.get("provider_profile_data"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                last_login_at: row.get("last_login_at"),
+            })),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_user_federated_identities(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<FederatedIdentityData>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, tenant_id, user_id, provider_id, provider_user_id, provider_email,
+                   provider_email_verified, provider_profile_data, created_at, updated_at, last_login_at
+            FROM federated_identities
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!(
+                "Failed to get user federated identities: {}",
+                e
+            ))
+        })?;
+
+        Ok(rows
+            .iter()
+            .map(|row| FederatedIdentityData {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                user_id: row.get("user_id"),
+                provider_id: row.get("provider_id"),
+                provider_user_id: row.get("provider_user_id"),
+                provider_email: row.get("provider_email"),
+                provider_email_verified: row.get("provider_email_verified"),
+                provider_profile_data: row.get("provider_profile_data"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                last_login_at: row.get("last_login_at"),
+            })
+            .collect())
+    }
+
+    async fn delete_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "DELETE FROM federated_identities WHERE tenant_id = $1 AND provider_id = $2 AND provider_user_id = $3",
+        )
+        .bind(tenant_id)
+        .bind(provider_id)
+        .bind(provider_user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            StorageError::ConnectionError(format!("Failed to delete federated identity: {}", e))
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn get_or_create_federated_user(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_info: &crate::auth::federation::ProviderUserInfo,
+    ) -> Result<UserData, StorageError> {
+        use uuid::Uuid;
+
+        // Check if this federated identity already exists
+        if let Some(existing_identity) = self
+            .get_federated_identity(tenant_id, provider_id, &provider_user_info.provider_user_id)
+            .await?
+        {
+            // Update last login time
+            let mut updated_identity = existing_identity.clone();
+            updated_identity.last_login_at = Some(Utc::now());
+            updated_identity.updated_at = Utc::now();
+            updated_identity.provider_email = provider_user_info.email.clone();
+            updated_identity.provider_email_verified = provider_user_info.email_verified.unwrap_or(false);
+            updated_identity.provider_profile_data = provider_user_info.raw_profile.clone();
+
+            self.store_federated_identity(updated_identity).await?;
+
+            // Return existing user
+            return self
+                .get_user(&existing_identity.user_id)
+                .await?
+                .ok_or(StorageError::NotFound);
+        }
+
+        // Check if user exists with this email
+        let existing_user = self.get_user_by_email(tenant_id, &provider_user_info.email).await?;
+
+        // TODO: Check federation configuration for disallow_user_creation
+        // For now, we'll always allow user creation if they don't exist
+
+        let user = if let Some(mut user) = existing_user {
+            // TODO: Check federation configuration for disallow_user_from_multiple_providers
+            // For now, we'll allow linking multiple providers to the same user
+
+            // Update user information if needed
+            if user.name.is_none() && provider_user_info.name.is_some() {
+                user.name = provider_user_info.name.clone();
+            }
+
+            if user.picture.is_none() && provider_user_info.picture.is_some() {
+                user.picture = provider_user_info.picture.clone();
+            }
+
+            // Email verification from trusted providers
+            if provider_user_info.email_verified.unwrap_or(false) && !user.email_verified {
+                user.email_verified = true;
+            }
+
+            user.updated_at = Utc::now();
+
+            // Update user in database
+            self.update_user(&user.id, user.clone()).await?;
+
+            user
+        } else {
+            // Create new user
+            let user_id = Uuid::new_v4().to_string();
+            let now = Utc::now();
+
+            let new_user = UserData {
+                id: user_id.clone(),
+                tenant_id: tenant_id.to_string(),
+                email: provider_user_info.email.clone(),
+                password_hash: String::new(), // No password for federated users
+                name: provider_user_info.name.clone(),
+                picture: provider_user_info.picture.clone(),
+                role: "user".to_string(),
+                active: true,
+                email_verified: provider_user_info.email_verified.unwrap_or(false),
+                created_at: now,
+                updated_at: now,
+                attributes: std::collections::HashMap::new(),
+            };
+
+            self.store_user(&user_id, new_user.clone()).await?;
+
+            new_user
+        };
+
+        // Create federated identity link
+        let federated_identity = FederatedIdentityData {
+            id: Uuid::new_v4().to_string(),
+            tenant_id: tenant_id.to_string(),
+            user_id: user.id.clone(),
+            provider_id: provider_id.to_string(),
+            provider_user_id: provider_user_info.provider_user_id.clone(),
+            provider_email: provider_user_info.email.clone(),
+            provider_email_verified: provider_user_info.email_verified.unwrap_or(false),
+            provider_profile_data: provider_user_info.raw_profile.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_login_at: Some(Utc::now()),
+        };
+
+        self.store_federated_identity(federated_identity).await?;
+
+        Ok(user)
     }
 }

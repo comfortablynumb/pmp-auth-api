@@ -21,6 +21,8 @@ pub struct MemoryStorage {
     rate_limits: Arc<Mutex<HashMap<String, Vec<DateTime<Utc>>>>>,
     users: Arc<Mutex<HashMap<String, UserData>>>,
     email_to_user_id: Arc<Mutex<HashMap<(String, String), String>>>, // (tenant_id, email) -> user_id
+    federated_identities: Arc<Mutex<HashMap<(String, String, String), FederatedIdentityData>>>, // (tenant_id, provider_id, provider_user_id) -> data
+    user_to_federated_identities: Arc<Mutex<HashMap<String, Vec<String>>>>, // user_id -> vec of federated identity IDs
 }
 
 impl MemoryStorage {
@@ -38,6 +40,8 @@ impl MemoryStorage {
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             users: Arc::new(Mutex::new(HashMap::new())),
             email_to_user_id: Arc::new(Mutex::new(HashMap::new())),
+            federated_identities: Arc::new(Mutex::new(HashMap::new())),
+            user_to_federated_identities: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -582,6 +586,214 @@ impl StorageBackend for MemoryStorage {
         } else {
             Err(StorageError::NotFound)
         }
+    }
+
+    // Federated Identity operations
+    async fn store_federated_identity(
+        &self,
+        data: FederatedIdentityData,
+    ) -> Result<(), StorageError> {
+        let key = (
+            data.tenant_id.clone(),
+            data.provider_id.clone(),
+            data.provider_user_id.clone(),
+        );
+
+        let mut federated_identities = self
+            .federated_identities
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        federated_identities.insert(key, data.clone());
+
+        // Update user to federated identities mapping
+        let mut user_to_federated = self
+            .user_to_federated_identities
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        user_to_federated
+            .entry(data.user_id.clone())
+            .or_insert_with(Vec::new)
+            .push(data.id.clone());
+
+        Ok(())
+    }
+
+    async fn get_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<Option<FederatedIdentityData>, StorageError> {
+        let key = (
+            tenant_id.to_string(),
+            provider_id.to_string(),
+            provider_user_id.to_string(),
+        );
+
+        let federated_identities = self
+            .federated_identities
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        Ok(federated_identities.get(&key).cloned())
+    }
+
+    async fn get_user_federated_identities(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<FederatedIdentityData>, StorageError> {
+        let federated_identities = self
+            .federated_identities
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        let result: Vec<FederatedIdentityData> = federated_identities
+            .values()
+            .filter(|identity| identity.user_id == user_id)
+            .cloned()
+            .collect();
+
+        Ok(result)
+    }
+
+    async fn delete_federated_identity(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_id: &str,
+    ) -> Result<(), StorageError> {
+        let key = (
+            tenant_id.to_string(),
+            provider_id.to_string(),
+            provider_user_id.to_string(),
+        );
+
+        let mut federated_identities = self
+            .federated_identities
+            .lock()
+            .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+        if let Some(identity) = federated_identities.remove(&key) {
+            // Remove from user mapping
+            let mut user_to_federated = self
+                .user_to_federated_identities
+                .lock()
+                .map_err(|e| StorageError::ConnectionError(format!("Lock poisoned: {}", e)))?;
+
+            if let Some(identity_ids) = user_to_federated.get_mut(&identity.user_id) {
+                identity_ids.retain(|id| id != &identity.id);
+            }
+
+            Ok(())
+        } else {
+            Err(StorageError::NotFound)
+        }
+    }
+
+    async fn get_or_create_federated_user(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        provider_user_info: &crate::auth::federation::ProviderUserInfo,
+    ) -> Result<UserData, StorageError> {
+        use uuid::Uuid;
+
+        // Check if this federated identity already exists
+        if let Some(mut existing_identity) = self
+            .get_federated_identity(tenant_id, provider_id, &provider_user_info.provider_user_id)
+            .await?
+        {
+            // Update last login time
+            existing_identity.last_login_at = Some(Utc::now());
+            existing_identity.updated_at = Utc::now();
+            existing_identity.provider_email = provider_user_info.email.clone();
+            existing_identity.provider_email_verified = provider_user_info.email_verified.unwrap_or(false);
+            existing_identity.provider_profile_data = provider_user_info.raw_profile.clone();
+
+            self.store_federated_identity(existing_identity.clone()).await?;
+
+            // Return existing user
+            return self
+                .get_user(&existing_identity.user_id)
+                .await?
+                .ok_or(StorageError::NotFound);
+        }
+
+        // Check if user exists with this email
+        let existing_user = self.get_user_by_email(tenant_id, &provider_user_info.email).await?;
+
+        // TODO: Check federation configuration for disallow_user_creation
+        // For now, we'll always allow user creation if they don't exist
+
+        let user = if let Some(mut user) = existing_user {
+            // TODO: Check federation configuration for disallow_user_from_multiple_providers
+            // For now, we'll allow linking multiple providers to the same user
+
+            // Update user information if needed
+            if user.name.is_none() && provider_user_info.name.is_some() {
+                user.name = provider_user_info.name.clone();
+            }
+
+            if user.picture.is_none() && provider_user_info.picture.is_some() {
+                user.picture = provider_user_info.picture.clone();
+            }
+
+            // Email verification from trusted providers
+            if provider_user_info.email_verified.unwrap_or(false) && !user.email_verified {
+                user.email_verified = true;
+            }
+
+            user.updated_at = Utc::now();
+
+            // Update user in database
+            self.update_user(&user.id, user.clone()).await?;
+
+            user
+        } else {
+            // Create new user
+            let user_id = Uuid::new_v4().to_string();
+            let now = Utc::now();
+
+            let new_user = UserData {
+                id: user_id.clone(),
+                tenant_id: tenant_id.to_string(),
+                email: provider_user_info.email.clone(),
+                password_hash: String::new(), // No password for federated users
+                name: provider_user_info.name.clone(),
+                picture: provider_user_info.picture.clone(),
+                role: "user".to_string(),
+                active: true,
+                email_verified: provider_user_info.email_verified.unwrap_or(false),
+                created_at: now,
+                updated_at: now,
+                attributes: std::collections::HashMap::new(),
+            };
+
+            self.store_user(&user_id, new_user.clone()).await?;
+
+            new_user
+        };
+
+        // Create federated identity link
+        let federated_identity = FederatedIdentityData {
+            id: Uuid::new_v4().to_string(),
+            tenant_id: tenant_id.to_string(),
+            user_id: user.id.clone(),
+            provider_id: provider_id.to_string(),
+            provider_user_id: provider_user_info.provider_user_id.clone(),
+            provider_email: provider_user_info.email.clone(),
+            provider_email_verified: provider_user_info.email_verified.unwrap_or(false),
+            provider_profile_data: provider_user_info.raw_profile.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            last_login_at: Some(Utc::now()),
+        };
+
+        self.store_federated_identity(federated_identity).await?;
+
+        Ok(user)
     }
 }
 
