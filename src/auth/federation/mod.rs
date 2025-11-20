@@ -412,6 +412,7 @@ pub async fn federation_callback(
 
     // Generate refresh token
     let refresh_token = Uuid::new_v4().to_string();
+    let session_id = Uuid::new_v4().to_string(); // Generate session ID for logout coordination (REQUIRED)
     let now = chrono::Utc::now();
     let refresh_token_data = crate::storage::RefreshTokenData {
         tenant_id: tenant_id.clone(),
@@ -420,6 +421,7 @@ pub async fn federation_callback(
         scope: scope_vec.join(" "),
         created_at: now,
         expires_at: Some(now + chrono::Duration::days(30)),
+        session_id: session_id.clone(),
     };
 
     state
@@ -447,6 +449,7 @@ pub async fn federation_callback(
                 None, // authorization_code
                 None, // acr
                 Some(vec!["federated".to_string()]), // amr
+                session_id.clone(), // sid for session management (REQUIRED)
                 oauth2_config,
                 oidc_config,
             )

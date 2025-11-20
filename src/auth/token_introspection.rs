@@ -4,7 +4,7 @@
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
+use axum::{Form, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -84,17 +84,27 @@ struct TokenClaims {
     #[serde(default)]
     client_id: Option<String>,
     #[serde(default)]
+    azp: Option<String>, // Authorized party (alternative to client_id)
+    #[serde(default)]
     jti: Option<String>,
     #[serde(default)]
     api_key: Option<bool>,
 }
 
+impl TokenClaims {
+    /// Get client_id, preferring client_id claim over azp claim
+    fn get_client_id(&self) -> Option<String> {
+        self.client_id.clone().or_else(|| self.azp.clone())
+    }
+}
+
 /// Token Introspection Endpoint (RFC 7662)
 /// POST /api/v1/tenant/{tenant_id}/oauth/introspect
+/// Accepts application/x-www-form-urlencoded per RFC 7662 Section 2.1
 pub async fn token_introspect(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
-    Json(request): Json<IntrospectionRequest>,
+    Form(request): Form<IntrospectionRequest>,
 ) -> Result<Json<IntrospectionResponse>, (StatusCode, Json<serde_json::Value>)> {
     debug!(
         "Token introspection request for tenant '{}', token_type_hint: {:?}",
@@ -151,9 +161,15 @@ async fn introspect_token(
 ) -> Result<IntrospectionResponse, String> {
     // Try OAuth2 signing key first
     if let Some((oauth2_config, _storage_id)) = tenant.get_oauth2_provider() {
+        debug!("Found OAuth2 provider, attempting to decode token");
         let key_result = decode_with_key(token, &oauth2_config.signing_key.public_key);
 
+        if let Err(e) = &key_result {
+            debug!("Failed to decode token with OAuth2 key: {}", e);
+        }
+
         if let Ok(claims) = key_result {
+            debug!("Successfully decoded token, checking expiration and revocation");
             // Check if token is expired
             let now = chrono::Utc::now().timestamp() as usize;
             if let Some(exp) = claims.exp {
@@ -161,7 +177,7 @@ async fn introspect_token(
                     return Ok(IntrospectionResponse {
                         active: false,
                         scope: claims.scope.clone(),
-                        client_id: claims.client_id.clone(),
+                        client_id: claims.get_client_id(),
                         username: None,
                         token_type: Some("Bearer".to_string()),
                         exp: Some(exp as u64),
@@ -183,7 +199,7 @@ async fn introspect_token(
                         return Ok(IntrospectionResponse {
                             active: false,
                             scope: claims.scope.clone(),
-                            client_id: claims.client_id.clone(),
+                            client_id: claims.get_client_id(),
                             username: None,
                             token_type: Some("Bearer".to_string()),
                             exp: claims.exp.map(|e| e as u64),
@@ -210,7 +226,7 @@ async fn introspect_token(
                 return Ok(IntrospectionResponse {
                     active: false,
                     scope: claims.scope.clone(),
-                    client_id: claims.client_id.clone(),
+                    client_id: claims.get_client_id(),
                     username: None,
                     token_type: Some("Bearer".to_string()),
                     exp: claims.exp.map(|e| e as u64),
@@ -227,7 +243,7 @@ async fn introspect_token(
             return Ok(IntrospectionResponse {
                 active: true,
                 scope: claims.scope.clone(),
-                client_id: claims.client_id.clone(),
+                client_id: claims.get_client_id(),
                 username: None, // Could be extracted from claims if needed
                 token_type: Some("Bearer".to_string()),
                 exp: claims.exp.map(|e| e as u64),
@@ -239,6 +255,8 @@ async fn introspect_token(
                 jti: claims.jti.clone(),
             });
         }
+    } else {
+        debug!("No OAuth2 provider found for tenant");
     }
 
     // Try API key signing key
@@ -253,7 +271,7 @@ async fn introspect_token(
                     return Ok(IntrospectionResponse {
                         active: false,
                         scope: claims.scope.clone(),
-                        client_id: claims.client_id.clone(),
+                        client_id: claims.get_client_id(),
                         username: None,
                         token_type: Some("Bearer".to_string()),
                         exp: Some(exp as u64),
@@ -272,7 +290,7 @@ async fn introspect_token(
                 return Ok(IntrospectionResponse {
                     active: false,
                     scope: claims.scope.clone(),
-                    client_id: claims.client_id.clone(),
+                    client_id: claims.get_client_id(),
                     username: None,
                     token_type: Some("Bearer".to_string()),
                     exp: claims.exp.map(|e| e as u64),
@@ -289,7 +307,7 @@ async fn introspect_token(
             return Ok(IntrospectionResponse {
                 active: true,
                 scope: claims.scope.clone(),
-                client_id: claims.client_id.clone(),
+                client_id: claims.get_client_id(),
                 username: None,
                 token_type: Some("Bearer".to_string()),
                 exp: claims.exp.map(|e| e as u64),
@@ -322,6 +340,8 @@ fn decode_with_key(token: &str, public_key_pem: &str) -> Result<TokenClaims, Str
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_required_spec_claims(&["exp"]); // Require expiration claim
     validation.validate_exp = false; // We'll manually validate expiration to control the response
+    validation.validate_aud = false; // Don't validate audience for introspection
+    validation.validate_nbf = false; // Don't validate not-before for introspection
 
     // Try to decode and validate the token
     let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
@@ -374,10 +394,11 @@ fn extract_audience(aud: &Option<serde_json::Value>) -> Option<String> {
 
 /// Token Revocation Endpoint (RFC 7009)
 /// POST /api/v1/tenant/{tenant_id}/oauth/revoke
+/// Accepts application/x-www-form-urlencoded per RFC 7009 Section 2.1
 pub async fn token_revoke(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
-    Json(request): Json<RevocationRequest>,
+    Form(request): Form<RevocationRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     info!(
         "Token revocation request for tenant '{}', token_type_hint: {:?}",

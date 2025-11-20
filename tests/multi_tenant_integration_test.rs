@@ -59,6 +59,7 @@ fn test_create_oauth2_tenant_config() {
             allowed_origins: vec![],
             identity_providers,
             identity_storage,
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -133,6 +134,7 @@ fn test_multiple_tenants_different_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -207,6 +209,7 @@ fn test_multiple_tenants_different_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -319,6 +322,7 @@ fn test_tenant_with_all_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -367,6 +371,7 @@ fn test_config_validation_errors() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -450,6 +455,7 @@ fn test_arc_wrapped_config() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -521,6 +527,7 @@ fn test_inactive_tenant() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: false,
         },
@@ -696,6 +703,7 @@ fn test_tenant_with_multiple_oauth2_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -929,6 +937,7 @@ fn test_tenant_with_multiple_oidc_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -1103,6 +1112,7 @@ fn test_tenant_with_multiple_saml_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -1291,6 +1301,7 @@ fn test_tenant_with_mixed_providers_shared_storage() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -1442,6 +1453,7 @@ fn test_provider_storage_resolution() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },
@@ -1606,6 +1618,7 @@ fn test_global_storage_with_multi_providers() {
                 );
                 storage_map
             },
+            federation_providers: HashMap::new(),
             api_keys: None,
             active: true,
         },

@@ -1,4 +1,4 @@
-mod env_interpolation;
+pub mod env_interpolation;
 
 use crate::models::AppConfig;
 use env_interpolation::interpolate_env_vars;

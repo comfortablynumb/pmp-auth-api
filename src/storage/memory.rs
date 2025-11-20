@@ -816,6 +816,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             nonce: None,
+            session_id: "test_session".to_string(),
         };
 
         // Store

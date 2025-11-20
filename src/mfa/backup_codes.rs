@@ -1,7 +1,7 @@
 // Backup codes for MFA recovery
 // Provides one-time use codes for account recovery when MFA device is unavailable
 
-use bcrypt::{hash, verify, DEFAULT_COST};
+use crate::crypto::PasswordHasher;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -41,13 +41,16 @@ pub struct BackupCodesManager {
     /// In-memory storage of backup codes
     /// In production, this should use a persistent storage backend
     storage: Arc<RwLock<HashMap<String, UserBackupCodes>>>,
+    /// Password hasher for backup code hashing
+    password_hasher: Arc<dyn PasswordHasher>,
 }
 
 impl BackupCodesManager {
-    /// Create a new backup codes manager
-    pub fn new() -> Self {
+    /// Create a new backup codes manager with a specific password hasher
+    pub fn new(password_hasher: Arc<dyn PasswordHasher>) -> Self {
         Self {
             storage: Arc::new(RwLock::new(HashMap::new())),
+            password_hasher,
         }
     }
 
@@ -69,8 +72,7 @@ impl BackupCodesManager {
             let code_str = format!("{:09}", code);
 
             // Hash the code for storage
-            let code_hash = hash(&code_str, DEFAULT_COST)
-                .map_err(|e| format!("Failed to hash backup code: {}", e))?;
+            let code_hash = self.password_hasher.hash_password(&code_str)?;
 
             plain_codes.push(code_str);
             hashed_codes.push(BackupCode {
@@ -121,7 +123,7 @@ impl BackupCodesManager {
             }
 
             // Verify the code
-            match verify(code, &backup_code.code_hash) {
+            match self.password_hasher.verify_password(code, &backup_code.code_hash) {
                 Ok(true) => {
                     // Mark the code as used
                     backup_code.used = true;
@@ -203,7 +205,8 @@ impl BackupCodesManager {
 
 impl Default for BackupCodesManager {
     fn default() -> Self {
-        Self::new()
+        use crate::crypto::BcryptPasswordHasher;
+        Self::new(Arc::new(BcryptPasswordHasher::new()))
     }
 }
 
@@ -219,10 +222,11 @@ pub struct BackupCodesInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::MockPasswordHasher;
 
     #[tokio::test]
     async fn test_generate_and_verify_backup_codes() {
-        let manager = BackupCodesManager::new();
+        let manager = BackupCodesManager::new(Arc::new(MockPasswordHasher::new()));
 
         // Generate codes
         let codes = manager
@@ -253,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_regenerate_backup_codes() {
-        let manager = BackupCodesManager::new();
+        let manager = BackupCodesManager::new(Arc::new(MockPasswordHasher::new()));
 
         // Generate initial codes
         let codes1 = manager
@@ -284,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_codes_info() {
-        let manager = BackupCodesManager::new();
+        let manager = BackupCodesManager::new(Arc::new(MockPasswordHasher::new()));
 
         // Generate codes
         let codes = manager
@@ -313,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_revoke_codes() {
-        let manager = BackupCodesManager::new();
+        let manager = BackupCodesManager::new(Arc::new(MockPasswordHasher::new()));
 
         // Generate codes
         let codes = manager

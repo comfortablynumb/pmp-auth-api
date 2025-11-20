@@ -257,22 +257,74 @@ This is a comprehensive authentication and authorization server supporting:
 ### SAML 2.0 Identity Provider
 
 #### Protocols
-- ✅ **SAML SSO** (Web Browser SSO Profile)
-  - HTTP-Redirect binding
-  - HTTP-POST binding
-  - IdP-initiated SSO
-  - SP-initiated SSO
-- ✅ **Metadata Endpoint**
+- ✅ **SAML SSO** (Web Browser SSO Profile - SAML 2.0 Core)
+  - HTTP-Redirect binding (deflate + base64)
+  - HTTP-POST binding (base64 encoded)
+  - SP-initiated SSO with AuthnRequest
+  - Session-based user authentication
+- ✅ **Single Logout (SLO)** (SAML 2.0 Profiles)
+  - LogoutRequest parsing with NameID and SessionIndex
+  - LogoutResponse generation
+  - Session termination integration
+- ✅ **Metadata Endpoint** (SAML 2.0 Metadata)
   - EntityDescriptor generation
-  - IDPSSODescriptor
-  - KeyDescriptor with certificates
+  - IDPSSODescriptor with endpoints
+  - KeyDescriptor with X.509 certificates
+  - SingleSignOnService (POST and Redirect)
+  - SingleLogoutService
 
-#### Assertions
-- ✅ Assertion generation structure
-- ✅ Subject with NameID
-- ✅ Conditions (NotBefore, NotOnOrAfter)
-- ✅ AttributeStatement support
-- ✅ AuthnStatement
+#### Assertions & Security
+- ✅ **Complete SAML Assertions**
+  - Subject with NameID (multiple formats supported):
+    - urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+    - urn:oasis:names:tc:SAML:2.0:nameid-format:persistent (SHA256-based)
+    - urn:oasis:names:tc:SAML:2.0:nameid-format:transient (UUID-based)
+    - urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified
+  - SubjectConfirmation (bearer method with recipient validation)
+  - Conditions (time validity, audience restriction)
+  - AuthnStatement with session index
+  - AttributeStatement with custom attributes (email, uid)
+- ✅ **XML Digital Signatures** (XML-DSig)
+  - **Signature Generation**:
+    - RSA-SHA256 signature algorithm
+    - Enveloped signature transform
+    - Exclusive XML canonicalization (exc-c14n)
+    - SHA-256 digest method
+    - X.509 certificate embedding in KeyInfo
+  - **Signature Verification** (NEW):
+    - Validates signatures on incoming AuthnRequests
+    - Extracts and verifies SignedInfo element
+    - Supports RSA-SHA256 verification
+    - X.509 certificate-based public key extraction
+    - Optional signature verification (configurable per SP)
+- ✅ **Assertion Encryption** (NEW - XML Encryption)
+  - AES-256-CBC for data encryption
+  - RSA-OAEP for key encryption
+  - EncryptedAssertion support
+  - Encrypted key transport
+  - Compatible with standard SAML tooling
+- ✅ **Certificate Management**
+  - PEM file loading for certificates
+  - PEM file loading for private keys
+  - Certificate data extraction and formatting
+  - X.509 certificate parsing for encryption/signing
+
+#### XML Processing
+- ✅ **SAML Request Parsing** (quick-xml)
+  - AuthnRequest parsing with namespace support
+  - ID, Issuer, AssertionConsumerServiceURL extraction
+  - LogoutRequest parsing
+  - Error handling for malformed XML
+- ✅ **SAML Response Generation**
+  - Complete Response structure with InResponseTo
+  - Base64 encoding for POST binding
+  - Auto-submit HTML forms for transparent SSO
+
+#### Authentication & Authorization
+- ✅ Session validation with expiration checking
+- ✅ User lookup via StorageBackend
+- ✅ Audience restriction enforcement
+- ✅ Time-bound assertions (5-minute validity window)
 
 ---
 
@@ -357,34 +409,6 @@ This is a comprehensive authentication and authorization server supporting:
 ---
 
 ## ⚠️ Incomplete/Started Features
-
-### SAML Implementation
-
-**Status**: Structure exists but core functionality incomplete
-
-**Location**: `src/auth/saml.rs`
-
-**Missing**:
-- ❌ User authentication (line 88) - TODO marker
-- ❌ Logout request parsing (line 188) - TODO marker
-- ❌ Certificate loading from config (line 240) - TODO marker
-- ❌ SAML XML request parsing (line 274) - TODO marker
-- ❌ XML Digital Signature (line 379) - TODO marker
-
-**What exists**:
-- ✅ Endpoint structure
-- ✅ Response generation framework
-- ✅ Metadata endpoint
-- ✅ Basic assertion structure
-
-**Next Steps**:
-1. Implement actual SAML request parsing with XML library
-2. Add proper XML signature validation and signing
-3. Integrate with identity backend for user authentication
-4. Add certificate management
-5. Implement logout request handling
-
----
 
 ### LDAP Identity Backend
 
@@ -555,15 +579,15 @@ This is a comprehensive authentication and authorization server supporting:
 
 #### Core SAML Functionality
 - **Artifact Binding**: Not implemented
+  - Would require artifact storage backend
+  - SOAP binding implementation
+  - Artifact resolution service endpoint
 - **SOAP Binding**: Not implemented
 - **Attribute Query**: Not implemented
 - **Enhanced Client Proxy (ECP)**: Not implemented
-
-#### SAML Security
-- **XML Encryption**: Not implemented
-- **Assertion Encryption**: Structure exists, encryption missing
-- **Signature Validation**: Incomplete
-- **Certificate Validation**: Basic implementation
+- **Enhanced Attribute Mapping**: Basic implementation
+  - Currently only maps email and uid attributes
+  - Could be enhanced with configurable attribute mapping from user profiles
 
 ---
 
@@ -877,7 +901,6 @@ See `config/config.example.yaml` for multi-tenant setup examples.
 ### Priority Features for Contributors
 1. **High Priority**:
    - DPoP implementation (RFC 9449)
-   - Complete SAML implementation
    - LDAP backend completion
 
 2. **Medium Priority**:
@@ -885,11 +908,12 @@ See `config/config.example.yaml` for multi-tenant setup examples.
    - Pairwise subject identifiers
    - CIBA flow
    - Additional federation providers (Azure AD, Okta, Auth0)
+   - SAML Artifact binding
 
 3. **Low Priority**:
    - Claims parameter support
    - ACR implementation
-   - Additional bindings for SAML
+   - Enhanced SAML attribute mapping
 
 ---
 
@@ -923,9 +947,11 @@ See `config/config.example.yaml` for multi-tenant setup examples.
 - ⚠️ OpenID Connect CIBA (Not implemented)
 
 ### SAML Compliance
-- ⚠️ SAML 2.0 Core (Partial implementation)
-- ⚠️ SAML 2.0 Bindings (Partial implementation)
-- ⚠️ SAML 2.0 Profiles (Partial implementation)
+- ✅ SAML 2.0 Core (Complete Web Browser SSO Profile)
+- ✅ SAML 2.0 Bindings (HTTP-POST, HTTP-Redirect)
+- ✅ SAML 2.0 Profiles (Web Browser SSO Profile)
+- ✅ XML Digital Signatures (XML-DSig)
+- ✅ XML Encryption (XML-Enc)
 
 ---
 
@@ -939,12 +965,17 @@ See `config/config.example.yaml` for multi-tenant setup examples.
 - ✅ Front-Channel Logout implementation
 - ✅ Verified Hybrid & Implicit flows
 - ✅ OAuth2 Federation (Google and GitHub providers) with extensible trait system
+- ✅ Advanced SAML features:
+  - XML signature verification for incoming AuthnRequests (RSA-SHA256)
+  - Multiple NameID formats (email, persistent, transient, unspecified)
+  - Assertion encryption (AES-256-CBC + RSA-OAEP)
+  - Complete Web Browser SSO Profile implementation
 
 #### Known Issues
-- SAML implementation incomplete
 - LDAP backend stubbed
 - DPoP not implemented
 - PAR not implemented
+- SAML Artifact binding not implemented
 
 ---
 
@@ -956,5 +987,5 @@ See `config/config.example.yaml` for multi-tenant setup examples.
 
 ---
 
-**Last Updated**: 2025-01-19
+**Last Updated**: 2025-11-20
 **Maintained By**: Development Team

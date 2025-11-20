@@ -1,7 +1,7 @@
 // Token Exchange (RFC 8693)
 // This module implements the OAuth 2.0 Token Exchange Protocol
 
-use crate::auth::identity_storage::create_identity_storage;
+use crate::auth::identity_storage::create_identity_storage_with_backend;
 use crate::auth::oauth2_server::generate_access_token;
 use crate::models::Claims;
 use crate::AppState;
@@ -214,7 +214,7 @@ pub async fn token_exchange(
             })),
         )
     })?;
-    let backend = create_identity_storage(storage);
+    let backend = create_identity_storage_with_backend(storage, state.storage.clone(), &tenant_id);
     let user = backend
         .get_user_by_id(&subject_claims.sub)
         .map_err(|e| {

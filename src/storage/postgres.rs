@@ -56,8 +56,8 @@ impl StorageBackend for PostgresStorage {
         sqlx::query(
             r#"
             INSERT INTO authorization_codes
-            (code, tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at, code_challenge, code_challenge_method, nonce)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            (code, tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at, code_challenge, code_challenge_method, nonce, session_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(code)
@@ -71,6 +71,7 @@ impl StorageBackend for PostgresStorage {
         .bind(data.code_challenge.as_deref())
         .bind(data.code_challenge_method.as_deref())
         .bind(data.nonce.as_deref())
+        .bind(&data.session_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -92,7 +93,7 @@ impl StorageBackend for PostgresStorage {
         let result = sqlx::query(
             r#"
             SELECT tenant_id, client_id, user_id, redirect_uri, scope, created_at, expires_at,
-                   code_challenge, code_challenge_method, nonce
+                   code_challenge, code_challenge_method, nonce, session_id
             FROM authorization_codes
             WHERE code = $1
             "#,
@@ -115,6 +116,7 @@ impl StorageBackend for PostgresStorage {
             code_challenge: row.get("code_challenge"),
             code_challenge_method: row.get("code_challenge_method"),
             nonce: row.get("nonce"),
+            session_id: row.get("session_id"),
         }))
     }
 
@@ -139,8 +141,8 @@ impl StorageBackend for PostgresStorage {
         sqlx::query(
             r#"
             INSERT INTO refresh_tokens
-            (token, tenant_id, client_id, user_id, scope, created_at, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (token, tenant_id, client_id, user_id, scope, created_at, expires_at, session_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(token)
@@ -150,6 +152,7 @@ impl StorageBackend for PostgresStorage {
         .bind(&data.scope)
         .bind(data.created_at)
         .bind(data.expires_at)
+        .bind(&data.session_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -170,7 +173,7 @@ impl StorageBackend for PostgresStorage {
     ) -> Result<Option<RefreshTokenData>, StorageError> {
         let result = sqlx::query(
             r#"
-            SELECT tenant_id, client_id, user_id, scope, created_at, expires_at
+            SELECT tenant_id, client_id, user_id, scope, created_at, expires_at, session_id
             FROM refresh_tokens
             WHERE token = $1
             "#,
@@ -189,6 +192,7 @@ impl StorageBackend for PostgresStorage {
             scope: row.get("scope"),
             created_at: row.get("created_at"),
             expires_at: row.get("expires_at"),
+            session_id: row.get("session_id"),
         }))
     }
 

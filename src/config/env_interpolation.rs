@@ -10,6 +10,8 @@ use std::env;
 /// # Examples
 ///
 /// ```
+/// use pmp_auth_api::config::env_interpolation::interpolate_env_vars;
+///
 /// std::env::set_var("MY_VAR", "hello");
 /// let result = interpolate_env_vars("Value is ${env:MY_VAR}").unwrap();
 /// assert_eq!(result, "Value is hello");

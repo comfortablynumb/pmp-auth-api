@@ -202,6 +202,7 @@ pub struct AuthorizationCodeData {
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
     pub nonce: Option<String>,
+    pub session_id: String, // Session ID for logout coordination (REQUIRED)
 }
 
 /// Refresh token data
@@ -213,6 +214,7 @@ pub struct RefreshTokenData {
     pub scope: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
+    pub session_id: String, // Session ID for logout coordination (REQUIRED)
 }
 
 /// API key metadata

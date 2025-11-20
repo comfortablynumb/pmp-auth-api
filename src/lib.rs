@@ -4,6 +4,7 @@ pub mod audit;
 pub mod auth;
 pub mod certs;
 pub mod config;
+pub mod crypto;
 pub mod handlers;
 pub mod health;
 pub mod ldap;

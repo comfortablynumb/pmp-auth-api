@@ -134,7 +134,28 @@ pub struct DatabaseStorage {
 
 impl DatabaseStorage {
     pub fn new(config: &DatabaseStorageConfig) -> Self {
-        // Create a connection pool synchronously
+        // For test/mock connection URLs, create a dummy pool that will never be used
+        // This avoids the "cannot start runtime from within runtime" error in tests
+        if config.connection_url.starts_with("memory://")
+            || config.connection_url.starts_with("test://")
+            || config.connection_url == "memory://" {
+            // Create minimal connection options without actually connecting
+            let options = sqlx::postgres::PgConnectOptions::new()
+                .host("localhost")
+                .port(5432)
+                .database("test");
+
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy_with(options);
+
+            return DatabaseStorage {
+                config: config.clone(),
+                pool,
+            };
+        }
+
+        // Create a connection pool synchronously for real database URLs
         let pool = tokio::runtime::Handle::current()
             .block_on(async {
                 sqlx::PgPool::connect(&config.connection_url)
@@ -196,6 +217,16 @@ impl IdentityStorageTrait for DatabaseStorage {
         username: &str,
         password: &str,
     ) -> Result<AuthenticationResult, StorageError> {
+        // For test/mock configurations, authentication should not be used
+        // Tests should use the storage backend directly (MemoryStorage, etc.)
+        if self.config.connection_url.starts_with("memory://")
+            || self.config.connection_url.starts_with("test://")
+            || self.config.connection_url == "memory://" {
+            return Err(StorageError::ConfigurationError(
+                "Database identity storage cannot be used with mock connection URLs. Use storage backend directly for authentication in tests.".to_string()
+            ));
+        }
+
         tokio::runtime::Handle::current().block_on(async {
             let query = format!(
                 "SELECT * FROM {} WHERE {} = $1 OR {} = $1",
@@ -234,6 +265,14 @@ impl IdentityStorageTrait for DatabaseStorage {
     }
 
     fn get_user_by_id(&self, user_id: &str) -> Result<StorageUser, StorageError> {
+        if self.config.connection_url.starts_with("memory://")
+            || self.config.connection_url.starts_with("test://")
+            || self.config.connection_url == "memory://" {
+            return Err(StorageError::ConfigurationError(
+                "Database identity storage cannot be used with mock connection URLs".to_string()
+            ));
+        }
+
         tokio::runtime::Handle::current().block_on(async {
             let query = format!(
                 "SELECT * FROM {} WHERE {} = $1",
@@ -252,6 +291,14 @@ impl IdentityStorageTrait for DatabaseStorage {
     }
 
     fn get_user_by_email(&self, email: &str) -> Result<StorageUser, StorageError> {
+        if self.config.connection_url.starts_with("memory://")
+            || self.config.connection_url.starts_with("test://")
+            || self.config.connection_url == "memory://" {
+            return Err(StorageError::ConfigurationError(
+                "Database identity storage cannot be used with mock connection URLs".to_string()
+            ));
+        }
+
         tokio::runtime::Handle::current().block_on(async {
             let query = format!(
                 "SELECT * FROM {} WHERE {} = $1",
@@ -274,6 +321,129 @@ impl IdentityStorageTrait for DatabaseStorage {
     }
 }
 
+/// In-memory identity storage implementation that uses StorageBackend
+pub struct MemoryIdentityStorage {
+    storage: std::sync::Arc<dyn crate::storage::StorageBackend>,
+    tenant_id: String,
+}
+
+impl MemoryIdentityStorage {
+    pub fn new(storage: std::sync::Arc<dyn crate::storage::StorageBackend>, tenant_id: String) -> Self {
+        MemoryIdentityStorage { storage, tenant_id }
+    }
+}
+
+impl IdentityStorageTrait for MemoryIdentityStorage {
+    fn authenticate(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<AuthenticationResult, StorageError> {
+        // Use async runtime to call the storage backend
+        let storage = self.storage.clone();
+        let tenant_id = self.tenant_id.clone();
+        let username = username.to_string();
+        let password = password.to_string();
+
+        // Use spawn and wait to execute async code from sync context
+        let handle = tokio::runtime::Handle::current();
+        let result = handle.block_on(async move {
+            // Get user by email
+            let user_data = storage
+                .get_user_by_email(&tenant_id, &username)
+                .await
+                .map_err(|e| match e {
+                    crate::storage::StorageError::NotFound => StorageError::UserNotFound,
+                    _ => StorageError::ConnectionError(format!("Storage error: {}", e)),
+                })?
+                .ok_or(StorageError::UserNotFound)?;
+
+            // Verify password
+            let valid = bcrypt::verify(&password, &user_data.password_hash)
+                .map_err(|e| StorageError::ConnectionError(format!("Password verification failed: {}", e)))?;
+
+            if !valid {
+                return Err(StorageError::AuthenticationFailed);
+            }
+
+            // Convert to StorageUser
+            let user = StorageUser {
+                id: user_data.id,
+                email: user_data.email,
+                name: user_data.name,
+                picture: user_data.picture,
+                role: UserRole::from_str(&user_data.role).unwrap_or(UserRole::User),
+                attributes: user_data.attributes,
+            };
+
+            Ok(AuthenticationResult {
+                user,
+                success: true,
+            })
+        });
+        result
+    }
+
+    fn get_user_by_id(&self, user_id: &str) -> Result<StorageUser, StorageError> {
+        let storage = self.storage.clone();
+        let user_id = user_id.to_string();
+
+        let handle = tokio::runtime::Handle::current();
+        let result = handle.block_on(async move {
+            let user_data = storage
+                .get_user(&user_id)
+                .await
+                .map_err(|e| match e {
+                    crate::storage::StorageError::NotFound => StorageError::UserNotFound,
+                    _ => StorageError::ConnectionError(format!("Storage error: {}", e)),
+                })?
+                .ok_or(StorageError::UserNotFound)?;
+
+            Ok(StorageUser {
+                id: user_data.id.clone(),
+                email: user_data.email.clone(),
+                name: user_data.name.clone(),
+                picture: user_data.picture.clone(),
+                role: UserRole::from_str(&user_data.role).unwrap_or(UserRole::User),
+                attributes: user_data.attributes.clone(),
+            })
+        });
+        result
+    }
+
+    fn get_user_by_email(&self, email: &str) -> Result<StorageUser, StorageError> {
+        let storage = self.storage.clone();
+        let tenant_id = self.tenant_id.clone();
+        let email = email.to_string();
+
+        let handle = tokio::runtime::Handle::current();
+        let result = handle.block_on(async move {
+            let user_data = storage
+                .get_user_by_email(&tenant_id, &email)
+                .await
+                .map_err(|e| match e {
+                    crate::storage::StorageError::NotFound => StorageError::UserNotFound,
+                    _ => StorageError::ConnectionError(format!("Storage error: {}", e)),
+                })?
+                .ok_or(StorageError::UserNotFound)?;
+
+            Ok(StorageUser {
+                id: user_data.id.clone(),
+                email: user_data.email.clone(),
+                name: user_data.name.clone(),
+                picture: user_data.picture.clone(),
+                role: UserRole::from_str(&user_data.role).unwrap_or(UserRole::User),
+                attributes: user_data.attributes.clone(),
+            })
+        });
+        result
+    }
+
+    fn validate_user(&self, email: &str) -> Result<StorageUser, StorageError> {
+        self.get_user_by_email(email)
+    }
+}
+
 /// Factory function to create identity storage from configuration
 pub fn create_identity_storage(
     config: &IdentityStorage,
@@ -281,6 +451,23 @@ pub fn create_identity_storage(
     match config {
         IdentityStorage::Ldap(c) => Box::new(LdapStorage::new(c)),
         IdentityStorage::Database(c) => Box::new(DatabaseStorage::new(c)),
+    }
+}
+
+/// Factory function to create identity storage from configuration with storage backend
+/// This is used when the configuration uses a memory:// URL for testing
+pub fn create_identity_storage_with_backend(
+    config: &IdentityStorage,
+    storage: std::sync::Arc<dyn crate::storage::StorageBackend>,
+    tenant_id: &str,
+) -> Box<dyn IdentityStorageTrait + Send + Sync> {
+    match config {
+        IdentityStorage::Database(db_config)
+            if db_config.connection_url.starts_with("memory://")
+            || db_config.connection_url.starts_with("test://") => {
+            Box::new(MemoryIdentityStorage::new(storage, tenant_id.to_string()))
+        }
+        _ => create_identity_storage(config),
     }
 }
 

@@ -595,7 +595,8 @@ fn extract_public_key_from_jwks(
         return Ok(None);
     }
 
-    // Get the first key (TODO: support multiple keys and key selection)
+    // Get the first key for public_key_pem field
+    // All keys are stored in jwks_keys for kid-based key selection in client authentication
     let key = &keys[0];
 
     // Check key type

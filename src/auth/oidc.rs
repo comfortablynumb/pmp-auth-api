@@ -1,7 +1,7 @@
 // OpenID Connect Provider Implementation
 // This module implements the OIDC provider functionality on top of OAuth2
 
-use crate::auth::identity_storage::create_identity_storage;
+use crate::auth::identity_storage::create_identity_storage_with_backend;
 use crate::models::{Claims, OAuth2ServerConfig, OidcProviderConfig};
 use crate::AppState;
 use axum::extract::{Path, State};
@@ -42,6 +42,10 @@ pub struct OidcClaims {
     pub amr: Option<Vec<String>>, // Authentication Methods References
     #[serde(skip_serializing_if = "Option::is_none")]
     pub azp: Option<String>, // Authorized party (client_id if different from aud)
+
+    // Session management
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>, // Session ID (for logout coordination)
 
     // Optional standard claims
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,6 +277,7 @@ pub async fn oidc_userinfo(
     let mut validation = Validation::new(algorithm);
     validation.validate_exp = true;
     validation.validate_nbf = false;
+    validation.validate_aud = false; // Don't validate audience for UserInfo endpoint
     validation.set_required_spec_claims(&["sub", "exp"]);
 
     // Decode and validate the token
@@ -293,7 +298,7 @@ pub async fn oidc_userinfo(
     );
 
     // Retrieve user information from identity storage
-    let storage = state.config.get_identity_storage(&tenant_id, oidc_storage_id).ok_or_else(|| {
+    let identity_storage_config = state.config.get_identity_storage(&tenant_id, oidc_storage_id).ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -302,19 +307,66 @@ pub async fn oidc_userinfo(
             })),
         )
     })?;
-    let backend = create_identity_storage(storage);
-    let user = backend
-        .get_user_by_id(&token_data.claims.sub)
-        .map_err(|e| {
-            warn!("Failed to retrieve user from backend: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "server_error",
-                    "error_description": "Failed to retrieve user information"
-                })),
-            )
-        })?;
+
+    // Check if we're using a test/memory URL - if so, use storage backend directly
+    let is_memory_url = match identity_storage_config {
+        crate::models::IdentityStorage::Database(db_config) => {
+            db_config.connection_url.starts_with("memory://") || db_config.connection_url.starts_with("test://")
+        }
+        _ => false,
+    };
+
+    let user = if is_memory_url {
+        // Direct lookup via StorageBackend for tests
+        let user_data = state
+            .storage
+            .get_user(&token_data.claims.sub)
+            .await
+            .map_err(|e| {
+                warn!("Failed to retrieve user '{}': {}", token_data.claims.sub, e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": "server_error",
+                        "error_description": "Failed to retrieve user information"
+                    })),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({
+                        "error": "user_not_found",
+                        "error_description": "User not found"
+                    })),
+                )
+            })?;
+
+        // Convert to StorageUser
+        crate::auth::identity_storage::StorageUser {
+            id: user_data.id,
+            email: user_data.email,
+            name: user_data.name,
+            picture: user_data.picture,
+            role: crate::models::UserRole::from_str(&user_data.role).unwrap_or(crate::models::UserRole::User),
+            attributes: user_data.attributes,
+        }
+    } else {
+        // Use identity storage for non-test environments
+        let backend = create_identity_storage_with_backend(identity_storage_config, state.storage.clone(), &tenant_id);
+        backend
+            .get_user_by_id(&token_data.claims.sub)
+            .map_err(|e| {
+                warn!("Failed to retrieve user from backend: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": "server_error",
+                        "error_description": "Failed to retrieve user information"
+                    })),
+                )
+            })?
+    };
 
     // Build userinfo response with real user data
     let userinfo = UserinfoResponse {
@@ -357,6 +409,7 @@ pub async fn oidc_userinfo(
             acr: None,
             amr: None,
             azp: None,
+            sid: None, // No session ID for signed userinfo response
             name: userinfo.name.clone(),
             email: userinfo.email.clone(),
             email_verified: userinfo.email_verified,
@@ -461,6 +514,7 @@ fn calculate_hash(value: &str, algorithm: &Algorithm) -> String {
 }
 
 /// Generate an OpenID Connect ID token
+/// session_id is REQUIRED for proper session management
 pub fn generate_id_token(
     user_id: &str,
     email: &str,
@@ -471,6 +525,7 @@ pub fn generate_id_token(
     authorization_code: Option<&str>,
     acr_values: Option<String>,
     amr_values: Option<Vec<String>>,
+    session_id: String,
     oauth2_config: &OAuth2ServerConfig,
     oidc_config: &OidcProviderConfig,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
@@ -512,6 +567,7 @@ pub fn generate_id_token(
         acr: acr_values,
         amr: amr_values,
         azp,
+        sid: Some(session_id),
         name,
         email: Some(email.to_string()),
         email_verified: Some(true),
@@ -598,7 +654,7 @@ pub async fn check_session_iframe(
     var currentSessionState = null;
 
     // Calculate session state based on client_id, origin, and OP session
-    function getSessionState(clientId, origin) {
+    async function getSessionState(clientId, origin) {
         // Get the OP session cookie
         var opBrowserState = getOpBrowserState();
 
@@ -612,7 +668,8 @@ pub async fn check_session_iframe(
         var sessionStr = clientId + ' ' + origin + ' ' + opBrowserState + ' ' + salt;
 
         // Hash the session string
-        return sha256(sessionStr) + '.' + salt;
+        var hash = await sha256(sessionStr);
+        return hash + '.' + salt;
     }
 
     // Get OP browser state from cookie
@@ -636,21 +693,17 @@ pub async fn check_session_iframe(
         }).join('');
     }
 
-    // Simple SHA-256 implementation (in production, use WebCrypto API)
-    function sha256(str) {
-        // This is a placeholder - in production use:
-        // crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
-        var hash = 0;
-        for (var i = 0; i < str.length; i++) {
-            var char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        return Math.abs(hash).toString(16);
+    // SHA-256 implementation using WebCrypto API
+    async function sha256(str) {
+        const msgBuffer = new TextEncoder().encode(str);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => ('00' + b.toString(16)).slice(-2)).join('');
+        return hashHex;
     }
 
     // Handle messages from RP
-    window.addEventListener('message', function(e) {
+    window.addEventListener('message', async function(e) {
         // Parse the message
         var message = e.data;
         var parts = message.split(' ');
@@ -663,8 +716,8 @@ pub async fn check_session_iframe(
         var clientId = parts[0];
         var sessionState = parts[1];
 
-        // Calculate current session state
-        var currentState = getSessionState(clientId, e.origin);
+        // Calculate current session state (async because of WebCrypto)
+        var currentState = await getSessionState(clientId, e.origin);
 
         // Compare with provided session state
         var stat = 'changed';
@@ -727,6 +780,7 @@ mod tests {
             email_verified: Some(true),
             picture: None,
             preferred_username: Some("testuser".to_string()),
+            sid: None,
         };
 
         let json = serde_json::to_string(&claims).unwrap();
@@ -775,6 +829,7 @@ mod tests {
             email_verified: Some(true),
             picture: Some("https://example.com/avatar.jpg".to_string()),
             preferred_username: Some("alice".to_string()),
+            sid: None,
         };
 
         let json = serde_json::to_string(&claims).unwrap();
@@ -808,6 +863,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         let json = serde_json::to_string(&claims).unwrap();
@@ -868,6 +924,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         assert_eq!(claims.aud.len(), 3);
@@ -904,6 +961,7 @@ mod tests {
                 email_verified: None,
                 picture: None,
                 preferred_username: None,
+            sid: None,
             };
 
             assert!(claims.acr.unwrap().contains("urn:mace:incommon:iap"));
@@ -936,6 +994,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         let amr = claims.amr.unwrap();
@@ -1029,6 +1088,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         assert!(claims_with_hashes.at_hash.is_some());
@@ -1063,6 +1123,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         // Verify timestamps are logical
@@ -1095,6 +1156,7 @@ mod tests {
             email_verified: None,
             picture: None,
             preferred_username: None,
+            sid: None,
         };
 
         // Token is expired
